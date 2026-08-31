@@ -679,3 +679,42 @@ what milestone 9 will need without anyone having to remember to change it back.
 `screenEditorSetBand` keeps its job, sizing the grid to the panel. What moved
 out of it is the assumption that the grid and the visible area are the same
 rectangle.
+
+## 2026-08-31 -- Ctrl armed invisibly, which is why Ctrl+C took three tries
+
+Two symptoms, one cause, and the cause was a function I wrote three entries ago
+that does its job and only its job.
+
+`pumpPhysicalButtonsForProgram()` is the only thing polling the panel while a
+program runs, since `loop()` is blocked inside the interpreter. It dispatched
+taps to the keyboard and drew nothing. Everywhere else, arming Shift or Ctrl is
+followed by a redraw so the key shows inverted; there, it was not.
+
+So Ctrl armed correctly and looked like it had not. The natural response is to
+tap it again, which disarms it, and the C that follows is then an ordinary
+letter. Two taps out of three do nothing and the third works, which is exactly
+the "third attempt" reported. The break itself was never broken: `Esc` and
+`Ctrl+C` both reach `pumpProgramInput()` and both set `breakPending`.
+
+The same blind spot explains the status bar not responding mid-run: that path
+never looked at the bar at all.
+
+Both fixed by giving the running-program path the same two behaviours the idle
+one has: redraw the keyboard when an armed modifier changes, and handle a bar
+tap. The bar handler is now one function shared by both, rather than a copy,
+because a copy is how the two came apart in the first place.
+
+While a program has control, only KBD and COLOR are live. SCR would reset the
+grid out from under a program printing into it, and the three placeholders
+would interleave a "not built yet" line with the program's own output. Neither
+is something a bar tap should be able to do mid-run.
+
+## 2026-08-31 -- The machine's name in the bar
+
+Buttons narrowed from 80px to 60px, which frees 120px on the left for
+"MicroBASIC" over "CYD FNK0103-N", using the two lines the bar already had. The
+PaperS3's bar does the same with the space its own buttons leave.
+
+60px still clears every label: "EDITOR" is the longest at 48px in the 8x16
+cell, and the palette names are 40px. Nothing had to be abbreviated to make
+room.

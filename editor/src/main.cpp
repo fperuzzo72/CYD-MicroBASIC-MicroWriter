@@ -250,10 +250,16 @@ static void drawTerminal() {
 // nowhere to go here, so SCR and COLOR take its place at the far left and
 // everything else keeps the position a hand already knows.
 enum BarButtonId { BTN_SCR = 0, BTN_COLOR, BTN_EDIT, BTN_SYNC, BTN_KBD, BTN_BLE, BTN_COUNT };
-static constexpr int BTN_W = SCREEN_W / BTN_COUNT;  // 80
+
+// 60 rather than 80, which buys 120px on the left for the machine's name. The
+// PaperS3's bar does the same thing with the space its buttons leave. 60 still
+// clears every label: "EDITOR" is the longest at 48px in the 8x16 cell, and
+// "green", "amber" and "paper" are 40.
+static constexpr int BTN_W = 60;
+static constexpr int BTN_X0 = SCREEN_W - BTN_COUNT * BTN_W;  // 120
 
 static void drawBarButton(const int index, const char* label, const char* value, const bool active) {
-  const int x = index * BTN_W;
+  const int x = BTN_X0 + index * BTN_W;
   const int inset = 1;
   renderer.fillRect(x, 0, BTN_W, STATUS_BAR_H, active);
   renderer.drawRect(x + inset, inset, BTN_W - 2 * inset, STATUS_BAR_H - 2 * inset, !active);
@@ -278,6 +284,12 @@ static void drawBarButton(const int index, const char* label, const char* value,
 
 static void drawStatusBar() {
   renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
+
+  // What the machine is, on the two lines the bar already has. Spelled the way
+  // Freenove's own product code reads apart from the hyphen, which is how it is
+  // written on the box.
+  renderer.drawText(FONT_SCREEN_MONO_3, 4, 0, "MicroBASIC");
+  renderer.drawText(FONT_SCREEN_MONO_3, 4, 14, "CYD FNK0103-N");
 
   char scr[8];
   snprintf(scr, sizeof(scr), "%d", screenEditorGetMode());
@@ -308,6 +320,10 @@ static void drawAll() {
 void screenEditorFlushDisplay() {
   drawTerminal();
 }
+
+// Defined below, next to the bar it acts on. Declared here because the hook
+// that serves a running program sits above it and needs to call it.
+static bool handleBarTap(int x, bool duringRun);
 
 // --- What is not built here yet -------------------------------------------
 //
@@ -349,7 +365,27 @@ void pumpPhysicalButtonsForProgram() {
   static uint32_t lastTap = 0;
   if (now - lastTap < 220) return;
   lastTap = now;
+
+  if (y < STATUS_BAR_H) {
+    if (handleBarTap(x, /*duringRun=*/true)) {
+      drawAll();
+    }
+    return;
+  }
+
+  // Arming a modifier has to be visible here too, and this is where it was
+  // not. Ctrl+C is how a program is stopped from the keyboard, and tapping
+  // Ctrl armed it correctly while drawing nothing: no inverted key, no way to
+  // tell it had registered. So it gets tapped again, which disarms it, and the
+  // C that follows is an ordinary letter. Two taps out of three do nothing and
+  // the third works, which is exactly how it behaved.
+  const bool shiftWas = oskShiftArmed();
+  const bool ctrlWas = oskCtrlArmed();
+  const bool capsWas = oskCapsLockOn();
   oskHandleTap(x, y);  // enqueues through onOskKey, which is all a break needs
+  if (oskShiftArmed() != shiftWas || oskCtrlArmed() != ctrlWas || oskCapsLockOn() != capsWas) {
+    oskDraw();
+  }
 }
 
 static void notBuiltYet(const char* what) {
@@ -373,6 +409,40 @@ void startEditorFromCommand() { notBuiltYet("EDITOR"); }
 // them; the honest answer is that they have nowhere to go.
 void startReaderSwitchFromCommand() { screenEditorTermPrintLine("?READER is PaperS3 only"); }
 void startVcFromCommand() { screenEditorTermPrintLine("?VC is PaperS3 only"); }
+
+// One bar handler, used both from loop() and from inside a running program.
+//
+// While a program has control only the two buttons that change nothing but the
+// display are live. SCR would reset the grid out from under a program that is
+// printing into it, and the three placeholders would interleave their "not
+// built yet" line with the program's own output. Neither is a thing a bar tap
+// should be able to do mid-run.
+static bool handleBarTap(const int x, const bool duringRun) {
+  if (x < BTN_X0) return false;  // the machine's name, not a button
+  switch ((x - BTN_X0) / BTN_W) {
+    case BTN_KBD:
+      // Only the window changes. The grid keeps all its rows either way, so
+      // folding the keyboard away brings back the rows it was hiding rather
+      // than revealing blanks where they used to be.
+      g_oskVisible = !g_oskVisible;
+      return true;
+    case BTN_COLOR:
+      g_palette = (g_palette + 1) % kPaletteCount;
+      renderer.setPalette(kPalettes[g_palette].palette);
+      return true;
+    case BTN_SCR:
+      if (duringRun) return false;
+      screenEditorSetMode((screenEditorGetMode() + 1) % 4);
+      applyBand();
+      return true;
+    // Drawn before they work. They answer through the same functions the MENU
+    // commands do, so there is one place saying what is missing.
+    case BTN_BLE:  if (!duringRun) screenEditorTermPrintLine("?BLE not built yet"); return !duringRun;
+    case BTN_SYNC: if (!duringRun) startWifiSyncFromCommand(); return !duringRun;
+    case BTN_EDIT: if (!duringRun) startEditorFromCommand(); return !duringRun;
+  }
+  return false;
+}
 
 // A tapped key goes into the same queue a keyboard would feed, and nothing
 // here interprets it. Everything that used to be in this function now lives in
@@ -457,29 +527,7 @@ void loop() {
   uint16_t x = 0, y = 0;
   if (tft.getTouch(&x, &y)) {
     if (y < STATUS_BAR_H) {
-      switch (x / BTN_W) {
-        case BTN_KBD:
-          // Only the window changes. The grid keeps all 18 rows either way, so
-          // folding the keyboard away brings back the rows it was hiding
-          // rather than revealing blanks where they used to be. drawAll()
-          // repaints, which it has to: those rows were never drawn.
-          g_oskVisible = !g_oskVisible;
-          break;
-        case BTN_SCR:
-          screenEditorSetMode((screenEditorGetMode() + 1) % 4);
-          applyBand();
-          break;
-        case BTN_COLOR:
-          g_palette = (g_palette + 1) % kPaletteCount;
-          renderer.setPalette(kPalettes[g_palette].palette);
-          break;
-        // The three that are drawn before they work answer through the same
-        // functions the MENU commands do, so there is one place saying what is
-        // missing rather than two that could drift apart.
-        case BTN_BLE:  screenEditorTermPrintLine("?BLE not built yet"); break;
-        case BTN_SYNC: startWifiSyncFromCommand(); break;
-        case BTN_EDIT: startEditorFromCommand(); break;
-      }
+      handleBarTap(x, /*duringRun=*/false);
       drawAll();
     } else if (g_oskVisible) {
       const bool shiftWas = oskShiftArmed();

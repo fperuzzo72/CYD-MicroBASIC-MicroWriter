@@ -1052,3 +1052,48 @@ second way into the editor, so it gets no status-bar button.
 
 READER's message is reworded too. "PaperS3 only" was accurate but useless;
 "needs a second app slot" says what is actually missing.
+
+## 2026-08-31 -- The port is finished
+
+Select, copy and paste tested in the prose editor. Every milestone is closed and
+every one was checked on the board, not in a build.
+
+| Build | Flash | Static RAM |
+|---|---|---|
+| MicroBASIC | 1278801 of 3211264 (39.8%) | 114128 of 327680 |
+| MicroWriter | 1224529 of 3211264 (38.1%) | 87872 of 327680 |
+
+One last break, caught by building both targets before calling it done rather
+than after: `browserStartVc()` is declared under `#if !MICROWRITER`, because VC
+loads a program into an interpreter MicroWriter does not have, and the previous
+commit called it unguarded. MicroBASIC built fine and MicroWriter did not, which
+is the whole argument for building both every time.
+
+### What this port actually cost, and where
+
+The hardware was not the hard part. Panel, touch, SD and both radios were all
+working within their own milestones, and every number Freenove's files promised
+turned out to be true.
+
+Almost every bug came from one of two places, and neither is about this board:
+
+**Constants that were measurements of another panel.** The keycap inset was 4px,
+right at 30px half-units and wrong at 15. The terminal's row count and centring
+margin were stored numbers from a 960x540 panel. The status bar was 16px because
+that read well on a taller screen. Each was silently wrong rather than broken,
+which is the expensive kind.
+
+**Conditions written out more than once.** The paint chain and the key-routing
+chain. The cursor-blink guard and the cursor-draw guard. Two Caps Lock flags.
+Every one drifted, and every fix was the same fix: write it once and call it
+twice. The PaperS3's own log had already recorded this happening there, in a
+comment that turned out to be a prediction.
+
+And three of the worst were mine assuming rather than reading: a stub emptied
+because its name described the X4's hardware instead of its job; a Caps Lock
+flag whose comment said nothing set it, read as history rather than as a
+statement about the present; and `VC` declared PaperS3-only because it sat next
+to something that was, which the machine then repeated to anyone who asked.
+
+The habit that would have caught all three is the same one that did catch things
+later: when the code says something, believe it over the inference.

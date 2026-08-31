@@ -941,9 +941,18 @@ void startReaderSwitchFromCommand() { notify("?READER needs a second app slot");
 // Typed-only, deliberately, and that is file_browser.h's reasoning kept: it is
 // a shortcut for loading a program, not a second way into the editor, so it
 // gets no status-bar button.
+//
+// MicroBASIC only, and file_browser.h guards the declaration the same way. VC
+// loads a program into the interpreter, and MicroWriter has no interpreter to
+// load it into; there, the browser opening on notes is the whole machine and
+// this would be a shortcut to nothing.
 void startVcFromCommand() {
+#if MICROWRITER
+  notify("?VC needs the interpreter");
+#else
   browserStartVc();
   screenDirty = true;
+#endif
 }
 
 // One bar handler, used both from loop() and from inside a running program.

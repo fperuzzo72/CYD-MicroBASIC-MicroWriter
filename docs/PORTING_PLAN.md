@@ -1,5 +1,10 @@
 # Porting MicroBASIC and MicroWriter to the FNK0103N
 
+**Complete as of 2026-08-31.** All nine milestones are done and verified on the
+board. What follows is the plan as it was written and then corrected in place;
+the corrections are worth more than the plan was, and they are left visible
+rather than tidied away.
+
 The source is `MicroWriter-BASIC-PaperS3`, whose `editor/src` and `editor/lib`
 sit verbatim in `port-staging/`. Files move from there into `editor/src/` one
 at a time as each is ported, the same method that got the X4 firmware onto the

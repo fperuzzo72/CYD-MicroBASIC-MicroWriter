@@ -16,77 +16,25 @@ This is the third device in that line and by some distance the smallest.
 
 ## Status
 
-Milestone 1, hardware bring-up, is **done**. Panel, rotation, chip, flash size,
-the absence of PSRAM, the touch controller and the SD card are all confirmed on
-real hardware rather than inferred, and the board reports 335KB of free heap at
-boot, which is the budget the rest of the port lives inside. Evidence for every
-row is in `docs/HARDWARE.md`.
+**The port is done.** All nine milestones, every one verified on the board
+rather than in a build: the machine boots, pairs a BLE keyboard, runs BASIC,
+saves and loads from the card, edits prose, syncs both ways over WiFi, and runs
+a program uploaded from a computer.
 
-Milestone 2, the render layer, is **done**. `TftRenderer` offers the eighteen
-`GfxRenderer` methods the ported code actually calls, with matching signatures,
-and draws EpdFont glyphs straight to the panel with no framebuffer in between.
-A full character-grid repaint costs 65ms and a single cell 240us, both measured
-on the board; how that got from an initial 196ms is in
-`docs/PORTING_PLAN.md`, "The render budget".
+| Build | Flash | Static RAM |
+|---|---|---|
+| MicroBASIC | 1278801 of 3211264 (39.8%) | 114128 of 327680 |
+| MicroWriter | 1224529 of 3211264 (38.1%) | 87872 of 327680 |
 
-Because the panel is backlit and colour, it is no longer black on white by
-physics. Four palettes ship: **MSX blue** (white on TMS9918 colour 4, which is
-the default), phosphor green, phosphor amber, and paper white, which is what
-the two e-paper devices look like.
+The 4MB flash ceiling that looked like the dominant constraint when this started
+never bound anything, and NimBLE and WiFi run at the same time with the keyboard
+live while the server serves.
 
-A status bar carries six buttons: KBD folds the on-screen keyboard away, SCR
-cycles the SCREEN mode, COLOR cycles the palette, and BLE, SYNC and EDIT are
-drawn showing "--" because the machine has a place for them and does not have
-them yet.
-
-All four SCREEN modes exist and draw on the panel: 32, 40, 48 and 60 columns,
-each measuring exactly 480 pixels across. The 40-column mode happens to be
-exactly the width of MSX BASIC's text screen, so it is the boot mode, and the
-render demo boots into something shaped like an MSX startup screen with this
-board's own real numbers in it.
-
-Milestone 3, touch and the on-screen keyboard, is **done**. `osk.cpp` came over
-from the PaperS3 with nothing changed but its include and the renderer's type
-name, and it emits standard USB HID keycodes, which is the same wire format the
-editor and interpreter already expect. With the keyboard up the terminal has 7
-rows of 60 columns; folded away, 19.
-
-Milestone 4, the terminal, is **done**. `screen_editor.cpp` carries the
-character grid, its scrolling and the logical-line tracking that makes editing a
-listed line in place work. Its row count and centring margin are derived from a
-band rather than stored as per-mode constants measured on another panel.
-
-Milestone 5, the interpreter, is **done**. It is a BASIC computer: type a
-numbered line and it is program text, type anything else and it runs. The
-interpreter is Stefan Lenz's IoT BASIC, fetched at a pinned commit by
-`patches/tinybasic/fetch.sh` and never vendored here.
-
-Milestone 6, storage and the prose editor, is **done**, and both machines build
-and boot. MicroWriter opens its browser at boot and never closes it, since it
-has no terminal behind it. Notes are written in the same monospace unscii the
-terminal uses rather than the PaperS3's NotoSans, which is 2.6MB of headers this
-board's 3.2MB partition would rather spend on WiFi and BLE.
-
-Milestone 9, the BLE keyboard, is **ported and running**, done out of order
-because it was the expensive question. It costs 297KB of flash and about 145KB
-of heap. Flash was never the constraint: the build sits at 792KB of a 3.2MB
-partition. Free heap is, at 121KB with the stack up, and that is what the
-network milestone has to work within.
-
-Pairing, typing, and loading, editing and creating programs from a real BLE
-keyboard are all verified on the board.
-
-Milestone 8, the network, is **done**. Sync works in both directions over WiFi,
-the machine answers at `microbasic-cyd.local`, and a program uploaded from a
-computer runs on the device. NimBLE and WiFi run at the same time with the
-keyboard live while the server serves.
-
-**All nine milestones are done**, every one verified on the board rather than in
-a build. The firmware is 1278641 bytes of a 3211264-byte partition, 39.8%: the
-4MB ceiling that looked like the dominant constraint when this started never
-bound anything. The PaperS3 sources sit verbatim in
-`port-staging/` and move into `editor/src/` one at a time. See
-`docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
+What the machine does, in one list: BASIC with the four SCREEN modes,
+`SAVE`/`LOAD`/`FILES` on the SD card, `VC` for a program picker, a prose editor
+with select, copy and paste, an on-screen keyboard, a BLE keyboard, WiFi sync
+over `microbasic-cyd.local`, and four palettes including the MSX blue it boots
+into.
 
 ## The board, and why it matters
 

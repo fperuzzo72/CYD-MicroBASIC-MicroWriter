@@ -25,10 +25,12 @@ bool tbIsRunning() { return running; }
 
 void tbSetup() {
   if (ready) return;
-  // Printed before basicSetup() so it lands above the interpreter's own
-  // multi-line banner, giving the boot screen the shape a 1980s machine had:
-  // whose computer it is first, which BASIC second.
-  screenEditorTermPrintLine("FSP MicroBASIC v0.5 for M5Stack PaperS3");
+  // The PaperS3 prints its machine line here, above the interpreter's own
+  // banner, to give the boot screen the shape a 1980s machine had: whose
+  // computer it is first, which BASIC second. That shape is kept and the line
+  // is not: main.cpp prints the identity and the free memory before calling
+  // this, so a line here would be a second answer to a question already asked,
+  // and it named the wrong device anyway.
   // Depois do cabecalho, nao antes: a primeira linha da tela e a
   // identificacao da maquina, e um aviso de arranque vem abaixo dela.
   if (!autoexecEnabled) screenEditorTermPrintLine("Skipping autoexec.bas (BACK held)");

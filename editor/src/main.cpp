@@ -944,16 +944,26 @@ void setup() {
   // never closes. There is nothing behind it to go back to.
   browserStart();
 #else
-  tbRuntimeSetQuiet(true);
-  tbSetup();
-  tbRuntimeSetQuiet(false);
-
+  // Order is the whole point here, and it was wrong: screenEditorReset() used
+  // to run AFTER tbSetup(), which wiped the interpreter's own startup banner
+  // off the screen before anyone saw it.
+  //
+  // Now the machine says what it is and how much memory it has, then the
+  // interpreter says what it is underneath, then the prompt. Whose computer it
+  // is first, which BASIC second, which is the shape these machines had.
+  //
+  // No blank line anywhere: the four lines are one block.
+  //
+  // tbSetup() silences file failures around its own autoexec probe, so there is
+  // no wrapper here; an earlier one duplicated that and did nothing.
   screenEditorReset();
   char banner[64];
-  screenEditorTermPrintLine("MicroBASIC 0.1");
+  // 44 of the 60 columns, so it still fits whole in SCREEN 2 (48 col). SCREEN 1
+  // and 0 wrap it, which is what a real machine did too.
+  screenEditorTermPrintLine("FSP MicroBASIC 0.1 for CYD FNK0103-N");
   snprintf(banner, sizeof(banner), "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
   screenEditorTermPrintLine(banner);
-  screenEditorTermPrintLine("");
+  tbSetup();
   screenEditorTermPrintLine("Ok");
 #endif
 

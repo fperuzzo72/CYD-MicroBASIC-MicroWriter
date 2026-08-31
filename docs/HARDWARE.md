@@ -55,10 +55,15 @@ promised.
 | No PSRAM | **CONFIRMED** | `ESP.getPsramSize()` returns 0. 335KB of heap free at boot, which is the real budget the port has to live inside |
 | Panel draws, correct rotation, no clipped edge | **CONFIRMED** | The geometry proof rendered with the border touching all four edges and TL/TR/BL/BR markers in their right corners, at rotation 1 (480x320) |
 | Touch reads and calibrates | **CONFIRMED** | Four-corner calibration completed, and the values reloaded from NVS across a power cycle on the next boot |
-| SD mounts and lists a directory | PENDING | No card on hand. `SD.begin()` fails as expected with an empty slot, which tests nothing either way |
+| SD mounts and lists a directory | **CONFIRMED** | A 16GB SDHC card mounted on the VSPI bus at 20MHz and its root listed correctly, with the panel driving HSPI at the same time |
 
-The one thing still open is the SD card, and it needs nothing but a FAT32 card
-in the slot.
+Nothing is left open. Milestone 1 is done.
+
+The card used for the SD test happened to be a Raspberry Pi boot card, which is
+worth recording for two reasons. It proves the mount path handles a real,
+populated FAT32 filesystem rather than a freshly formatted empty one. And it is
+a reminder that this firmware will create folders and write files at the root of
+whatever card is present, so development from here wants a card of its own.
 
 ### Two toolchain facts this board taught us
 

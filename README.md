@@ -16,12 +16,11 @@ This is the third device in that line and by some distance the smallest.
 
 ## Status
 
-Milestone 1, hardware bring-up, runs on the board. Panel, rotation, chip,
-flash size, the absence of PSRAM and the touch controller are all confirmed on
-real hardware, not inferred; the board reports 335KB of free heap at boot,
-which is the budget the rest of the port lives inside. The SD probe is the one
-item still unverified, for want of a card in the slot. Details and evidence in
-`docs/HARDWARE.md`.
+Milestone 1, hardware bring-up, is **done**. Panel, rotation, chip, flash size,
+the absence of PSRAM, the touch controller and the SD card are all confirmed on
+real hardware rather than inferred, and the board reports 335KB of free heap at
+boot, which is the budget the rest of the port lives inside. Evidence for every
+row is in `docs/HARDWARE.md`.
 
 No MicroBASIC feature has been ported yet. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See

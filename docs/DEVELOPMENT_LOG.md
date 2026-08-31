@@ -120,3 +120,25 @@ garbage characters. It looked like the new coredump partition was misplaced. It
 was not: `erase_region 0x9000 0x5000` cleared it and the boot has been clean
 since. Anyone starting from a board with other firmware on it should run
 `pio run -t erase` once before the first upload.
+
+## 2026-08-31 -- SD confirmed, and milestone 1 closes with nothing open
+
+A card went in and mounted first try:
+
+```
+SD: SDHC, 15193 MB
+  overlays/  kernel7.img  kernel.img  kernel7l.img  ... and 40 more
+```
+
+Which is a Raspberry Pi boot card, and a better test than a blank one would
+have been: it proves the mount and directory read against a real populated
+FAT32 volume, with the panel driving HSPI at the same time the card is driving
+VSPI. The two buses genuinely do not contend, which was the one thing about
+this board that looked easier than the PaperS3 and now is.
+
+That was the last PENDING row. Every claim in HARDWARE.md's table is now
+something the board did, not something a datasheet said.
+
+Worth remembering when real work starts: this firmware creates folders and
+writes at the root of whatever card is in the slot. Development wants a card
+that is not somebody's Pi.

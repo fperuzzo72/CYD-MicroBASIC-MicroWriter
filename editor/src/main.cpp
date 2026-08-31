@@ -87,7 +87,8 @@ struct NamedPalette {
   TftRenderer::Palette palette;
 };
 static const NamedPalette kPalettes[] = {
-    {"msx", TftRenderer::MsxBlue},
+    // Upper case because it is an acronym, where the other three are words.
+    {"MSX", TftRenderer::MsxBlue},
     {"green", TftRenderer::PhosphorGreen},
     {"amber", TftRenderer::PhosphorAmber},
     {"paper", TftRenderer::PaperWhite},
@@ -220,7 +221,12 @@ static void drawTerminal() {
 // keyboard draws its own armed keys inverted, which is the same information
 // where the finger already is.
 
-enum BarButtonId { BTN_KBD = 0, BTN_BLE, BTN_SYNC, BTN_EDIT, BTN_SCR, BTN_COLOR, BTN_COUNT };
+// Left to right. The order is the PaperS3's, read off its own layout code,
+// which places them right to left: BLE at the edge, then KBD, SYNC, EDITOR,
+// READER, with the title filling whatever is left. READER is the one that has
+// nowhere to go here, so SCR and COLOR take its place at the far left and
+// everything else keeps the position a hand already knows.
+enum BarButtonId { BTN_SCR = 0, BTN_COLOR, BTN_EDIT, BTN_SYNC, BTN_KBD, BTN_BLE, BTN_COUNT };
 static constexpr int BTN_W = SCREEN_W / BTN_COUNT;  // 80
 
 static void drawBarButton(const int index, const char* label, const char* value, const bool active) {
@@ -246,12 +252,12 @@ static void drawStatusBar() {
   char scr[8];
   snprintf(scr, sizeof(scr), "%d", screenEditorGetMode());
 
-  drawBarButton(BTN_KBD, "KBD", g_oskVisible ? "on" : "off", g_oskVisible);
-  drawBarButton(BTN_BLE, "BLE", "--", false);
-  drawBarButton(BTN_SYNC, "SYNC", "--", false);
-  drawBarButton(BTN_EDIT, "EDIT", "--", false);
   drawBarButton(BTN_SCR, "SCR", scr, false);
   drawBarButton(BTN_COLOR, "COLOR", kPalettes[g_palette].name, false);
+  drawBarButton(BTN_EDIT, "EDITOR", "--", false);
+  drawBarButton(BTN_SYNC, "SYNC", "--", false);
+  drawBarButton(BTN_KBD, "KBD", g_oskVisible ? "on" : "off", g_oskVisible);
+  drawBarButton(BTN_BLE, "BLE", "--", false);
 }
 
 static void drawAll() {

@@ -67,7 +67,14 @@ has no terminal behind it. Notes are written in the same monospace unscii the
 terminal uses rather than the PaperS3's NotoSans, which is 2.6MB of headers this
 board's 3.2MB partition would rather spend on WiFi and BLE.
 
-Still to come: the network (milestone 8) and the BLE keyboard (milestone 9). The PaperS3 sources sit verbatim in
+Milestone 9, the BLE keyboard, is **ported and running**, done out of order
+because it was the expensive question. It costs 297KB of flash and about 145KB
+of heap. Flash was never the constraint: the build sits at 792KB of a 3.2MB
+partition. Free heap is, at 121KB with the stack up, and that is what the
+network milestone has to work within.
+
+Still to come: the network (milestone 8), and pairing verified against a real
+keyboard. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
 

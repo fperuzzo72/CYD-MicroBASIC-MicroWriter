@@ -858,3 +858,51 @@ Six milestones done, three to go: the network, the BLE keyboard, and whichever
 of those two the flash budget forces a choice between. On today's numbers there
 is 2.7MB of app partition unused, which is a much better position than the
 plan assumed when it was written.
+
+## 2026-08-31 -- BLE measured first, and the constraint moved
+
+Done out of plan order, because it was the expensive question and the plan was
+built around a guess about it.
+
+| | Flash | Free heap at the prompt |
+|---|---|---|
+| Without BLE | 495029 | 266KB |
+| With BLE | 791793 | 121KB |
+| Cost | +296764 | -145KB |
+
+**Flash is not the constraint and never was.** 791793 of 3211264 leaves 2.4MB,
+and a WiFi stack with a web server is 400-600KB. The whole "which one gives
+way" question, which shaped the plan from the first day, does not arise: both
+fit with room to spare.
+
+**Heap is the constraint, or will be.** 121KB free with NimBLE up, and WiFi
+wants its own. Two stacks at once on a 320KB part is what milestone 8 actually
+has to answer, and it is a runtime measurement, so no amount of staring at a
+binary settles it.
+
+There is a way out if it comes to that, and it is not a compromise: SYNC is
+something you start and finish, not a service that runs. Bringing the BLE stack
+down for the duration and back afterwards costs a reconnect, and `end()` and
+`begin()` already exist for it. Worth knowing before milestone 8 rather than
+discovering during it.
+
+**Three things about the port itself.**
+
+`BoardConfig.h` supplied four build switches, not the one I assumed. Removing
+the include and defining only `FREEINK_CAP_BLE_HID_HOST` left
+`FREEINK_BLE_HID_REQUIRE_MITM` undefined, and the failure surfaced as an error
+about `getInstance()` having static linkage, which points nowhere near the
+cause. They live in a local `BleHostConfig.h` now, with their defaults and the
+reason, so the next person to read that file finds all four in one place.
+
+`BleHid` is a macro in `BleKeyboardHost.h` expanding to `getInstance()`, not a
+variable. Declaring one of that name shadowed nothing and expanded to nonsense.
+
+`CONFIG_BT_NIMBLE_EXT_ADV` is deliberately absent where the PaperS3 sets it.
+Extended advertising is a Bluetooth 5 feature and this is a classic ESP32 with
+a 4.2 radio; carrying the flag over would be asking the stack for something the
+hardware cannot do. That is the fourth time on this port that a PaperS3 setting
+was right there and wrong here.
+
+Auto-pairing, the passkey display and the BLE button's live state are ported.
+`BLE: up` on the board. Untested against a real keyboard.

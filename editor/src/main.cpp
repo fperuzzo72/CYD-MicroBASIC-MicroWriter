@@ -40,6 +40,7 @@
 // compiled, so their symbols do not exist to be called.
 
 #include <Arduino.h>
+#include <BleKeyboardHost.h>
 #include <EpdFont.h>
 #include <EpdFontFamily.h>
 #include <Preferences.h>
@@ -107,6 +108,68 @@ static const NamedPalette kPalettes[] = {
     {"paper", TftRenderer::PaperWhite},
 };
 static constexpr int kPaletteCount = sizeof(kPalettes) / sizeof(kPalettes[0]);
+
+// BleHid is a macro from BleKeyboardHost.h expanding to getInstance(), not a
+// variable. Declaring one of that name here shadowed nothing and expanded to
+// nonsense; the header already provides the accessor.
+
+// --- Pairing a keyboard, without a pairing screen ---------------------------
+//
+// Ported from the PaperS3's own auto-pair, whose reasoning holds here: with no
+// bond yet, scan and take the first connectable HID device seen; with a bond,
+// let NimBLE reconnect on its own and only start scanning again after a long
+// idle stretch, so a keyboard that is merely asleep is not raced against.
+//
+// The BLE button forces a scan immediately, which is what to press when a
+// second keyboard needs pairing while the first is still bonded.
+static constexpr uint32_t kBleScanDurationMs = 5000;
+static constexpr uint32_t kBleScanRetryDelayMs = 3000;
+static constexpr uint32_t kBleBondedRetryGraceMs = 20000;
+static uint32_t g_bleIdleSinceMs = 0;
+static uint32_t g_bleNextScanAt = 0;
+static bool g_bleScanArmed = false;
+
+static void bleKbdAutoPair() {
+  const uint32_t now = millis();
+
+  if (BleHid.isConnected() || BleHid.isConnecting() || BleHid.isScanning()) {
+    g_bleIdleSinceMs = 0;  // something is in flight; only measure genuine idle
+  } else if (g_bleIdleSinceMs == 0) {
+    g_bleIdleSinceMs = now;
+  }
+
+  if (BleHid.isConnected() || BleHid.isConnecting()) return;
+  if (BleHid.pairedCount() > 0 && (now - g_bleIdleSinceMs) < kBleBondedRetryGraceMs) return;
+
+  if (BleHid.isScanning()) {
+    g_bleScanArmed = true;
+    return;
+  }
+  if (g_bleScanArmed) {
+    g_bleScanArmed = false;
+    for (uint8_t i = 0; i < BleHid.deviceCount(); i++) {
+      const freeink::DiscoveredDevice& d = BleHid.device(i);
+      if (d.hid && d.connectable) {
+        BleHid.connect(d.addr);
+        break;
+      }
+    }
+    BleHid.releaseScanResults();
+    g_bleNextScanAt = now + kBleScanRetryDelayMs;
+    return;
+  }
+  if (now >= g_bleNextScanAt) {
+    BleHid.startScan(kBleScanDurationMs);
+  }
+}
+
+static void forceBlePairingNow() {
+  BleHid.disconnect();
+  g_bleIdleSinceMs = 0;
+  g_bleNextScanAt = 0;
+  g_bleScanArmed = false;
+  BleHid.startScan(kBleScanDurationMs);
+}
 
 static int g_palette = 0;
 static bool g_oskVisible = true;
@@ -386,7 +449,11 @@ static void drawStatusBar() {
   drawBarButton(BTN_EDIT, "EDITOR", "--", false);
   drawBarButton(BTN_SYNC, "SYNC", "--", false);
   drawBarButton(BTN_KBD, "KBD", g_oskVisible ? "on" : "off", g_oskVisible);
-  drawBarButton(BTN_BLE, "BLE", "--", false);
+  const char* bleValue = BleHid.isConnected()   ? "on"
+                         : BleHid.isScanning()  ? "scan"
+                         : BleHid.pairedCount() ? "wait"
+                                                : "--";
+  drawBarButton(BTN_BLE, "BLE", bleValue, BleHid.isConnected());
 }
 
 // The prose editor: the wrapped lines text_editor.cpp computed, the selection
@@ -733,7 +800,10 @@ static bool handleBarTap(const int x, const bool duringRun) {
 #endif
     // Drawn before they work. They answer through the same functions the MENU
     // commands do, so there is one place saying what is missing.
-    case BTN_BLE:  if (!duringRun) notify("?BLE not built yet"); return !duringRun;
+    case BTN_BLE:
+      if (duringRun) return false;
+      forceBlePairingNow();
+      return true;
     case BTN_SYNC: if (!duringRun) startWifiSyncFromCommand(); return !duringRun;
     case BTN_EDIT:
       if (duringRun) return false;
@@ -755,7 +825,7 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 6, prose editor ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 9, BLE keyboard ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
@@ -802,6 +872,16 @@ void setup() {
                 sdDateTimeHasClock() ? "from network" : "seeded from build date");
 
   inputSetup();
+  // Named after the machine, so a keyboard's own paired-devices list says which
+  // of the two it belongs to.
+#if MICROWRITER
+  BleHid.begin("MicroWriter");
+#else
+  BleHid.begin("MicroBASIC");
+#endif
+  Serial.printf("BLE: %s | heap after stack init %u KB\n",
+                BleHid.isRunning() ? "up" : "FAILED",
+                static_cast<unsigned>(ESP.getFreeHeap() / 1024));
   editorInit();
   editorSetGlyphWidthFn(editorGlyphWidth);
   fileManagerSetup();
@@ -867,6 +947,37 @@ void loop() {
     delay(220);
     // Fall through rather than returning: the key just queued has to be
     // processed in this same pass, or nothing appears until the next touch.
+  }
+
+  // Keyboard first: a key arriving this iteration should be acted on this
+  // iteration, not the next.
+  bleKbdAutoPair();
+  BleHid.poll();
+  freeink::KeyEvent bleEv;
+  while (BleHid.popKey(bleEv)) {
+    enqueueKeyEvent(bleEv.keycode, bleEv.mods, bleEv.pressed);
+  }
+
+  // The BLE button shows live connection state, and that state changes without
+  // anyone touching the screen: a keyboard can connect or time out on its own.
+  // Without this the button would only catch up on whatever unrelated repaint
+  // happened next.
+  static bool wasBleConnected = false;
+  if (BleHid.isConnected() != wasBleConnected) {
+    wasBleConnected = BleHid.isConnected();
+    drawStatusBar();
+  }
+
+  // Some keyboards require Passkey Entry rather than Just Works: the host shows
+  // six digits and they are typed on the keyboard itself. Nothing surfaced it
+  // on the PaperS3 at first, and a keyboard wanting it sat waiting for a code
+  // nobody had been shown, which reads as "will not pair".
+  uint32_t passkey;
+  if (BleHid.takePairingPasskey(passkey)) {
+    char msg[48];
+    snprintf(msg, sizeof(msg), "[ble] pairing code: %06lu", static_cast<unsigned long>(passkey));
+    notify(msg);
+    screenDirty = true;
   }
 
   browserLoop();  // no-op unless the editor is open; drives auto-save

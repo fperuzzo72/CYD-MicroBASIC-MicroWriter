@@ -136,14 +136,27 @@ milestone, not before.
 The other risk is WiFi and NimBLE in the same binary on a classic ESP32, and it
 is now the sharper of the two.
 
-**The order is decided: the keyboard outranks WiFi.** Both if they fit, and if
-they do not, WiFi is what goes. That is a deliberate call about what this
-machine is. A BASIC computer you cannot type on is not one; a BASIC computer
-you cannot sync over the network is a BASIC computer with a memory card, which
-is what every machine this one is imitating actually was.
+**The order was decided: the keyboard outranks WiFi.** Both if they fit, and if
+they do not, WiFi is what goes. A BASIC computer you cannot type on is not one;
+one you cannot sync over the network is a BASIC computer with a memory card,
+which is what every machine this one imitates actually was.
 
-So milestone 9 is not conditional on milestone 8 leaving room. Measure the BLE
-build first, then see what is left for WiFi, rather than the other way round.
+**Measured, and the constraint turned out to be somewhere else.** BLE costs
+296764 bytes of flash and about 145KB of heap. Flash is not the problem: the
+build sits at 791793 of 3211264, leaving 2.4MB, and a WiFi stack with a web
+server is 400-600KB. Both fit with room to spare.
+
+Heap is the problem, or will be. Free heap at the prompt fell from 266KB to
+121KB when NimBLE came in. WiFi wants its own, and the two stacks running at
+once on a 320KB part is the real question milestone 8 has to answer. It is a
+runtime measurement, not a build one, so it cannot be settled by looking at a
+binary.
+
+The way out, if it comes to that, is that they never need to be up at the same
+time: SYNC is a thing you start deliberately and finish, not a service that
+runs. Shutting the BLE stack down for the duration of a sync and bringing it
+back afterwards costs a reconnect, and both `BleKeyboardHost::end()` and
+`begin()` already exist for exactly that.
 
 ## Milestones
 
@@ -226,7 +239,18 @@ compiling.
    | MicroWriter | 441833 of 3211264 | 48792 of 327680 |
 8. **Network.** `wifi_sync.cpp` and `web_files_page.h`. Measure the binary
    here; this is where the flash budget gets tested.
-9. **BLE keyboard.** `BleKeyboardHost` and NimBLE. No longer conditional on
+9. **BLE keyboard.** **Ported and running**, out of plan order because it was
+   the expensive question. `BleKeyboardHost` came across from freeink-sdk with
+   one substitution: its `BoardConfig.h` include, which supplied four build
+   switches and not the one assumed, replaced by a local `BleHostConfig.h`
+   carrying those four with their defaults. `CONFIG_BT_NIMBLE_EXT_ADV` is
+   deliberately not set: extended advertising is a Bluetooth 5 feature and this
+   is a classic ESP32 with a 4.2 radio.
+
+   Auto-pairing, the passkey display and the BLE button's live state are all
+   ported. Still unverified against a real keyboard.
+
+   (Original note, kept because the reasoning stands.) No longer conditional on
    milestone 8 leaving room: the plan for this device is a physical keyboard
    with the on-screen one as fallback, the same shape as the PaperS3. That
    makes it a requirement rather than a nice-to-have, and it moves the flash

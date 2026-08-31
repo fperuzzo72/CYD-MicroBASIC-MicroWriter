@@ -15,6 +15,11 @@ struct KeyDef {
   uint8_t rowSpan;  // height in rows; currently always 1 (kept general, see below)
   KeyKind kind;
   const char* label;  // fixed label; nullptr means "derive from hid via oskHidToChar()"
+  // Draw the label in the small font instead of the main one. For a key whose
+  // job is to fill space and be available rather than to be read: it should be
+  // findable without competing with the keys around it. Left off by every other
+  // entry, which aggregate initialisation zeroes for them.
+  bool smallLabel;
 };
 
 // USB HID keyboard usage IDs this layout needs. Letters (0x04-0x1D, A-Z
@@ -166,12 +171,14 @@ const KeyDef kRow4[] = {
     {HID_LEFT, 2, 1, KeyKind::Normal, "<"},
     {HID_DOWN, 2, 1, KeyKind::Normal, "v"},
     {HID_RIGHT, 2, 1, KeyKind::Normal, ">"},
-    // Unlabelled, and a Shift. The three arrows want to stay the same size as
+    // A Shift, labelled small. The three arrows want to stay the same size as
     // each other more than the bottom-right key wants to match the Shift above
     // it, so Right goes back to 2 and this fills the last two half-units rather
     // than leaving a gap. Making the filler a second Shift costs nothing and
-    // puts one directly under the right Shift of the row above.
-    {0, 2, 1, KeyKind::Shift, ""},
+    // puts one directly under the right Shift of the row above. "Sh" rather than
+    // "Shift" because two half-units is 22px of usable keycap here and the word
+    // needs 50; the small font keeps it quiet as well as short.
+    {0, 2, 1, KeyKind::Shift, "Sh", true},
 };
 
 struct Row {
@@ -392,16 +399,27 @@ void oskDraw() {
         }
       }
       if (label[0] != '\0') {
-        const int tw = g_renderer->getTextWidth(g_fontId, label);
+        // Which font this label gets. Either the key asked for the small one,
+        // or it asked for the main one and does not fit: a keycap 2 half-units
+        // wide has about 22px of interior here, so a label that overflows would
+        // run through its own border rather than being noticed. Falling back is
+        // better than clipping, and better than a size everyone has to check by
+        // hand every time the geometry moves.
+        const int interior = rect.w - 2 * kInset - 2 * kBorderWidth;
+        int labelFont = k.smallLabel ? g_smallFontId : g_fontId;
+        if (!k.smallLabel && g_renderer->getTextWidth(labelFont, label) > interior) {
+          labelFont = g_smallFontId;
+        }
+        const int tw = g_renderer->getTextWidth(labelFont, label);
         int tx = rect.x + (rect.w - tw) / 2;
-        int ty = rect.y + (rect.h - g_renderer->getLineHeight(g_fontId)) / 2;
+        int ty = rect.y + (rect.h - g_renderer->getLineHeight(labelFont)) / 2;
         if (hasHint) {
           tx += kHintClearDx;
           ty += kHintClearDy;
         }
         // armed keys are filled black; draw the label in white (state=false)
         // so it stays legible instead of vanishing into the fill.
-        g_renderer->drawText(g_fontId, tx, ty, label, !armed);
+        g_renderer->drawText(labelFont, tx, ty, label, !armed);
       }
 
       // Small Shift-hint in the top-RIGHT corner: what this key produces

@@ -67,7 +67,17 @@ static const EpdFont fontUnscii12x24(&unscii_12x24);
 static const EpdFont fontUnscii10x20(&unscii_10x20);
 static const EpdFont fontUnscii8x16(&unscii_8x16);
 
-static constexpr int STATUS_BAR_H = 16;
+// Two unscii rows tall, not one.
+//
+// 16px was enough to read and not enough to hit: the bar carries six buttons
+// now and a 16px target on a resistive panel is a miss waiting to happen. 32
+// also matches the keyboard's own row height, and it keeps the arithmetic
+// exact where it matters: 320 - 32 = 288, which is 18 rows of the 8x16 cell
+// with nothing left over, and 288 - 192 of keyboard leaves 96, which is 6.
+//
+// It costs one terminal row, 19 to 18. Worth it for buttons that can be
+// pressed on purpose.
+static constexpr int STATUS_BAR_H = 32;
 static constexpr int OSK_ROWS = 6;
 static constexpr int OSK_ROW_H = 32;
 static constexpr int OSK_H = OSK_ROWS * OSK_ROW_H;  // 192
@@ -192,16 +202,56 @@ static void drawTerminal() {
   if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
 }
 
+// --- Status bar -----------------------------------------------------------
+//
+// Six buttons, modelled on the PaperS3's bar, with two differences. READER and
+// VC are gone: both exist for that device's dual-boot layout with CrossPoint
+// and have nowhere to go here. In their place are SCR and COLOR, which were
+// tap-a-third-of-the-bar gestures until now, discoverable only by being told.
+//
+// BLE, SYNC and EDIT are drawn before they work, on purpose. A button that
+// shows "--" says the machine has a place for that and does not have it yet,
+// which is a truer picture than a bar that grows a new button every few weeks.
+// Tapping one prints what is missing on the terminal.
+//
+// Each button is a label over a value, which is what the 32px height buys: SCR
+// shows which mode is current, COLOR shows which palette, KBD shows whether
+// the keyboard is up. Shift and Caps indicators are NOT here any more; the
+// keyboard draws its own armed keys inverted, which is the same information
+// where the finger already is.
+
+enum BarButtonId { BTN_KBD = 0, BTN_BLE, BTN_SYNC, BTN_EDIT, BTN_SCR, BTN_COLOR, BTN_COUNT };
+static constexpr int BTN_W = SCREEN_W / BTN_COUNT;  // 80
+
+static void drawBarButton(const int index, const char* label, const char* value, const bool active) {
+  const int x = index * BTN_W;
+  const int inset = 1;
+  renderer.fillRect(x, 0, BTN_W, STATUS_BAR_H, active);
+  renderer.drawRect(x + inset, inset, BTN_W - 2 * inset, STATUS_BAR_H - 2 * inset, !active);
+
+  // Label above, value below, both in the 8x16 cell so two lines fit the bar
+  // exactly. Drawn in the opposite state to the fill so an active button reads
+  // as inverted, the same convention the keyboard uses for an armed key.
+  const int lw = renderer.getTextWidth(FONT_SCREEN_MONO_3, label);
+  renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - lw) / 2, 0, label, !active);
+  if (value && *value) {
+    const int vw = renderer.getTextWidth(FONT_SCREEN_MONO_3, value);
+    renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - vw) / 2, 16, value, !active);
+  }
+}
+
 static void drawStatusBar() {
-  char line[96];
-  snprintf(line, sizeof(line), " SCR%d %dx%d  %s  %s%s%s", screenEditorGetMode(), screenEditorCols(),
-           screenEditorRows(), kPalettes[g_palette].name, oskShiftArmed() ? "SHF " : "",
-           oskCtrlArmed() ? "CTL " : "", oskCapsLockOn() ? "CAPS" : "");
   renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
-  tft.setTextFont(2);
-  tft.setTextColor(renderer.getPalette().ink, renderer.getPalette().paper);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString(line, 2, 0);
+
+  char scr[8];
+  snprintf(scr, sizeof(scr), "%d", screenEditorGetMode());
+
+  drawBarButton(BTN_KBD, "KBD", g_oskVisible ? "on" : "off", g_oskVisible);
+  drawBarButton(BTN_BLE, "BLE", "--", false);
+  drawBarButton(BTN_SYNC, "SYNC", "--", false);
+  drawBarButton(BTN_EDIT, "EDIT", "--", false);
+  drawBarButton(BTN_SCR, "SCR", scr, false);
+  drawBarButton(BTN_COLOR, "COLOR", kPalettes[g_palette].name, false);
 }
 
 static void drawAll() {
@@ -370,20 +420,30 @@ void setup() {
 void loop() {
   uint16_t x = 0, y = 0;
   if (tft.getTouch(&x, &y)) {
-    if (y < STATUS_BAR_H + 8) {
-      if (x < SCREEN_W / 3) {
-        screenEditorSetMode((screenEditorGetMode() + 1) % 4);
-        applyBand();
-      } else if (x < 2 * SCREEN_W / 3) {
-        g_oskVisible = !g_oskVisible;
-        // The terminal's row count changes with it, and shrinking scrolls the
-        // content so the cursor survives. drawAll() below repaints everything,
-        // which is what folding the keyboard away has to do anyway: the rows it
-        // was covering have never been drawn.
-        applyBand();
-      } else {
-        g_palette = (g_palette + 1) % kPaletteCount;
-        renderer.setPalette(kPalettes[g_palette].palette);
+    if (y < STATUS_BAR_H) {
+      switch (x / BTN_W) {
+        case BTN_KBD:
+          g_oskVisible = !g_oskVisible;
+          // The terminal's row count changes with it, and shrinking scrolls
+          // the content so the cursor survives. drawAll() below repaints
+          // everything, which folding the keyboard away has to do anyway: the
+          // rows it was covering have never been drawn.
+          applyBand();
+          break;
+        case BTN_SCR:
+          screenEditorSetMode((screenEditorGetMode() + 1) % 4);
+          applyBand();
+          break;
+        case BTN_COLOR:
+          g_palette = (g_palette + 1) % kPaletteCount;
+          renderer.setPalette(kPalettes[g_palette].palette);
+          break;
+        // The three that are drawn before they work answer through the same
+        // functions the MENU commands do, so there is one place saying what is
+        // missing rather than two that could drift apart.
+        case BTN_BLE:  screenEditorTermPrintLine("?BLE not built yet"); break;
+        case BTN_SYNC: startWifiSyncFromCommand(); break;
+        case BTN_EDIT: startEditorFromCommand(); break;
       }
       drawAll();
     } else if (g_oskVisible) {

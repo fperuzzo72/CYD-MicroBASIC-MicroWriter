@@ -611,3 +611,36 @@ present is what cost the time in both cases.
 
 A BLE keyboard's Caps key will now work through this same path with nothing
 added, which is the part that matters for milestone 9.
+
+## 2026-08-31 -- A status bar with buttons, and the height to press them
+
+The bar carried three invisible gestures: tap the left third for SCREEN, the
+middle for the keyboard, the right for the palette. Discoverable only by being
+told, which is not a user interface.
+
+Six buttons now, modelled on the PaperS3's bar with two differences. READER and
+VC are gone, since both exist for that device's dual-boot layout with
+CrossPoint and have nowhere to go here. SCR and COLOR take their place.
+
+BLE, SYNC and EDIT are drawn before they work, deliberately. A button showing
+"--" says the machine has a place for that and does not have it yet, which is a
+truer picture than a bar that sprouts a new button every few weeks. Tapping one
+prints what is missing, through the same functions the MENU commands use, so
+there is one place saying it rather than two that can drift.
+
+**The bar went from 16px to 32px, and the arithmetic is why it is exactly 32.**
+16 was enough to read and not enough to hit. 32 matches the keyboard's own row
+height, gives each button a label over a value, and keeps the divisions exact
+where they matter: 320 - 32 = 288, which is 18 rows of the 8x16 cell with
+nothing left over, and 288 - 192 of keyboard leaves 96, which is 6. It costs one
+terminal row, 19 to 18.
+
+Each button shows its state rather than just its name: KBD says on or off, SCR
+says which mode, COLOR says which palette. The Shift and Caps indicators that
+used to sit in the bar are gone, not lost: the keyboard draws its own armed
+keys inverted, which is the same information where the finger already is.
+
+Six rows of terminal while typing now, down from seven. That is the number to
+watch: if it gets uncomfortable before milestone 9, the answer is a shorter
+keyboard rather than a shorter bar, because the bar is now the only thing on
+screen that can be pressed on purpose.

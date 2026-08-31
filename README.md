@@ -34,6 +34,11 @@ physics. Four palettes ship: **MSX blue** (white on TMS9918 colour 4, which is
 the default), phosphor green, phosphor amber, and paper white, which is what
 the two e-paper devices look like.
 
+A status bar carries six buttons: KBD folds the on-screen keyboard away, SCR
+cycles the SCREEN mode, COLOR cycles the palette, and BLE, SYNC and EDIT are
+drawn showing "--" because the machine has a place for them and does not have
+them yet.
+
 All four SCREEN modes exist and draw on the panel: 32, 40, 48 and 60 columns,
 each measuring exactly 480 pixels across. The 40-column mode happens to be
 exactly the width of MSX BASIC's text screen, so it is the boot mode, and the

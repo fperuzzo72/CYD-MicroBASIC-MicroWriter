@@ -1,5 +1,8 @@
 #include "osk.h"
 
+#include "config.h"
+#include "input_handler.h"
+
 #include "tft_renderer.h"
 
 #include <cstdio>
@@ -207,7 +210,6 @@ OskKeyCallback g_onKey = nullptr;
 bool g_shiftArmed = false;
 bool g_ctrlArmed = false;
 bool g_altArmed = false;
-bool g_capsLockOn = false;
 
 uint8_t currentModifiers() {
   uint8_t mods = 0;
@@ -234,44 +236,22 @@ void oskInit(TftRenderer& renderer, int labelFontId, int smallLabelFontId, int x
   g_shiftArmed = false;
   g_ctrlArmed = false;
   g_altArmed = false;
-  g_capsLockOn = false;
 }
 
 char oskHidToChar(uint8_t hid, uint8_t modifiers) {
-  const bool shift = (modifiers & (OSK_MOD_SHIFT_LEFT | 0x20)) != 0;  // left or right shift bit
-
-  if (hid >= 0x04 && hid <= 0x1D) {
-    const char base = 'a' + (hid - 0x04);
-    return (shift ^ g_capsLockOn) ? (base - 32) : base;
-  }
-  if (hid >= 0x1E && hid <= 0x27) {
-    static const char unshifted[] = "1234567890";
-    static const char shifted[] = "!@#$%^&*()";
-    const int idx = hid - 0x1E;
-    return shift ? shifted[idx] : unshifted[idx];
-  }
-  switch (hid) {
-    case HID_ENTER: return '\n';
-    case HID_TAB: return '\t';
-    case HID_SPACE: return ' ';
-    case HID_MINUS: return shift ? '_' : '-';
-    case HID_EQUALS: return shift ? '+' : '=';
-    case HID_LBRACKET: return shift ? '{' : '[';
-    case HID_RBRACKET: return shift ? '}' : ']';
-    case HID_BACKSLASH: return shift ? '|' : '\\';
-    case HID_SEMICOLON: return shift ? ':' : ';';
-    case HID_APOSTROPHE: return shift ? '"' : '\'';
-    case HID_GRAVE: return shift ? '~' : '`';
-    case HID_COMMA: return shift ? '<' : ',';
-    case HID_PERIOD: return shift ? '>' : '.';
-    case HID_SLASH: return shift ? '?' : '/';
-    default: return 0;
-  }
+  // Delegated, not reimplemented. This function used to carry its own copy of
+  // hidToAscii()'s rules, and osk.h said why: input_handler.cpp was not ported
+  // yet. It is now, and the copy had already drifted in the one way that
+  // matters, since it read a Caps Lock flag that only this file ever set. One
+  // set of rules, one Caps Lock, and the labels cannot disagree with what the
+  // keys produce.
+  return hidToAscii(hid, modifiers);
 }
+
 
 bool oskShiftArmed() { return g_shiftArmed; }
 bool oskCtrlArmed() { return g_ctrlArmed; }
-bool oskCapsLockOn() { return g_capsLockOn; }
+bool oskCapsLockOn() { return inputCapsLockOn(); }
 
 namespace {
 
@@ -333,7 +313,7 @@ void oskDraw() {
       const bool armed = (k.kind == KeyKind::Shift && g_shiftArmed) ||
                           (k.kind == KeyKind::Ctrl && g_ctrlArmed) ||
                           (k.kind == KeyKind::Alt && g_altArmed) ||
-                          (k.kind == KeyKind::CapsLock && g_capsLockOn);
+                          (k.kind == KeyKind::CapsLock && inputCapsLockOn());
 
       // Two-tier fill: functional keys (anything with a fixed multi-char
       // label -- Esc/Tab/Caps/Shift/Ctrl/Alt/Enter/Bksp/Space/arrows -- via
@@ -470,7 +450,11 @@ bool oskHandleTap(int logicalX, int logicalY) {
             g_altArmed = !g_altArmed;
             return true;
           case KeyKind::CapsLock:
-            g_capsLockOn = !g_capsLockOn;
+            // Sent as a key rather than handled here, so the host toggles the
+            // one Caps Lock there is. Exactly what a real keyboard does, which
+            // is why a BLE keyboard's Caps key will work through this same path
+            // with nothing added.
+            if (g_onKey) g_onKey(HID_KEY_CAPSLOCK, currentModifiers());
             return true;
           case KeyKind::Normal: {
             const uint8_t mods = currentModifiers();

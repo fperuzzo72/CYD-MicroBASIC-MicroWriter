@@ -22,7 +22,11 @@ static int queueHead = 0;
 static int queueTail = 0;
 static volatile bool queueFull = false;
 
-static bool capsLockOn = false;  // reserved: nothing currently sets this true
+// Toggled by enqueueKeyEvent() when a Caps Lock key arrives, and read by
+// hidToAscii() and by the on-screen keyboard. The single source of truth: see
+// inputCapsLockOn() in the header for why it belongs to the host rather than to
+// the keyboard.
+static bool capsLockOn = false;
 
 void inputSetup() {
   queueHead = 0;
@@ -33,7 +37,18 @@ void inputSetup() {
 
 bool inputQueueIsEmpty() { return (queueHead == queueTail) && !queueFull; }
 
+bool inputCapsLockOn() { return capsLockOn; }
+
 void enqueueKeyEvent(uint8_t keyCode, uint8_t modifiers, bool pressed) {
+  // Caps Lock never reaches the queue. It is a state change in the host, not a
+  // character, and every keyboard reports it the same way: as a key press, with
+  // no bit in the modifier byte. Handling it here rather than in a caller means
+  // the on-screen keyboard and a BLE keyboard both get it right without either
+  // of them knowing about the other.
+  if (keyCode == HID_KEY_CAPSLOCK) {
+    if (pressed) capsLockOn = !capsLockOn;
+    return;
+  }
   noInterrupts();
   if (!queueFull) {
     inputQueue[queueHead].keyCode = keyCode;

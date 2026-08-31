@@ -568,3 +568,46 @@ cursor survives, which `screenEditorSetBand` already did.
 
 Revisit at milestone 9. This is a decision about which input device is normal,
 not about the panel, and it changes when that does.
+
+## 2026-08-31 -- Caps Lock lit the labels and changed nothing else
+
+Tapping Caps made the keyboard's letter keys show uppercase, and then typed
+lowercase into the terminal. Which is a good symptom, because it says the
+keyboard knew and the machine did not.
+
+There were two Caps Lock flags:
+
+```
+osk.cpp:210           g_capsLockOn        toggled by the Caps key, read by the labels
+input_handler.cpp:25  capsLockOn = false; // reserved: nothing currently sets this true
+input_handler.cpp:61  bool shifted = isShift(modifiers) ^ capsLockOn;
+```
+
+The keystroke that reaches the screen editor goes through `hidToAscii()`, and
+its flag was the one nobody set. The comment beside it said so in plain words
+and had been true on the PaperS3 too; it just never showed there, because that
+device is normally driven by a BLE keyboard whose own Caps Lock the host does
+see.
+
+`osk.h` had already named the fix, two milestones before the bug appeared:
+
+> Duplicated here rather than shared because input_handler.cpp isn't ported yet
+
+It is ported now, so the duplication went rather than being patched. `osk.cpp`
+no longer keeps a Caps Lock, no longer reimplements `hidToAscii`'s rules, and
+sends `HID_KEY_CAPSLOCK` as a key when Caps is tapped. `enqueueKeyEvent()`
+consumes that key and toggles the one flag there is, which is what a real
+keyboard does: the modifier byte has no Caps bit, so the keyboard reports a
+press and the host holds the state.
+
+Thirty-one lines of duplicated conversion table deleted with it.
+
+The shape of this is worth noting next to the `pumpPhysicalButtonsForProgram`
+entry above. Both bugs were dormant code that described itself accurately and
+was believed anyway: one a stub whose comment explained the mechanism it was
+standing in for, the other a flag whose comment said nothing set it. Reading
+those comments as descriptions of the past rather than statements about the
+present is what cost the time in both cases.
+
+A BLE keyboard's Caps key will now work through this same path with nothing
+added, which is the part that matters for milestone 9.

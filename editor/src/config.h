@@ -50,6 +50,7 @@ static constexpr uint8_t HID_KEY_C          = 0x06;
 static constexpr uint8_t HID_KEY_ENTER      = 0x28;
 static constexpr uint8_t HID_KEY_ESCAPE     = 0x29;
 static constexpr uint8_t HID_KEY_BACKSPACE  = 0x2A;
+static constexpr uint8_t HID_KEY_CAPSLOCK   = 0x39;
 static constexpr uint8_t HID_KEY_RIGHT      = 0x4F;
 static constexpr uint8_t HID_KEY_LEFT       = 0x50;
 static constexpr uint8_t HID_KEY_DOWN       = 0x51;

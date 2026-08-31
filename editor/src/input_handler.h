@@ -21,6 +21,20 @@ void enqueueKeyEvent(uint8_t keyCode, uint8_t modifiers, bool pressed);
 int processAllInput();
 char hidToAscii(uint8_t hid, uint8_t modifiers);
 
+// Caps Lock, as the host sees it.
+//
+// It is not a modifier: the USB HID modifier byte has no bit for it. A real
+// keyboard sends the Caps Lock KEY and the host holds the state, which is why
+// this lives here and not in whatever produced the keystroke. enqueueKeyEvent()
+// consumes HID_KEY_CAPSLOCK and toggles this rather than queueing it.
+//
+// The on-screen keyboard reads this to draw its Caps key lit and its letter
+// keys in the case they will actually produce. It used to keep a second copy,
+// which is exactly how the two came apart: tapping Caps changed the labels and
+// nothing else, because the character the screen editor received had gone
+// through hidToAscii(), whose own flag nothing ever set.
+bool inputCapsLockOn();
+
 // Pops one already-queued key event for a caller that wants to route it
 // somewhere other than the screen editor -- main.cpp uses this to hand
 // input to wifi_sync.cpp's syncHandleKey() instead of processAllInput()

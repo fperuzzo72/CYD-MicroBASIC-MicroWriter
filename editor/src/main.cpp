@@ -29,8 +29,10 @@
 #include <EpdFontFamily.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
+#include <builtinFonts/unscii_10x20.h>
 #include <builtinFonts/unscii_12x24.h>
 #include <builtinFonts/unscii_15x30.h>
+#include <builtinFonts/unscii_8x16.h>
 
 #include "board_fnk0103n.h"
 #include "tft_renderer.h"
@@ -43,9 +45,13 @@ static Preferences prefs;
 // earlier devices: they only have to not collide with each other.
 static constexpr int FONT_SCREEN_0 = -2000000001;  // 32 columns
 static constexpr int FONT_SCREEN_1 = -2000000002;  // 40 columns
+static constexpr int FONT_SCREEN_2 = -2000000003;  // 48 columns
+static constexpr int FONT_SCREEN_3 = -2000000004;  // 60 columns
 
 static const EpdFont fontUnscii15x30(&unscii_15x30);
 static const EpdFont fontUnscii12x24(&unscii_12x24);
+static const EpdFont fontUnscii10x20(&unscii_10x20);
+static const EpdFont fontUnscii8x16(&unscii_8x16);
 
 // The status bar is one native unscii row tall, so the terminal band below it
 // is 304 pixels. See docs/PORTING_PLAN.md, "Screen geometry".
@@ -62,12 +68,14 @@ struct ScreenMode {
   int rows;
 };
 
-// Only the two modes whose fonts already exist in the PaperS3 build. SCREEN 2
-// (48 columns, 10x20) and SCREEN 3 (60 columns, native 8x16) still have to be
-// generated with research/fonts/tools/.
+// All four, as proposed in docs/PORTING_PLAN.md. Every column count divides
+// 480 exactly. SCREEN 3 is the only one whose rows divide the 304px band
+// exactly too, because its cell is unscii-16 at its own native size.
 static const ScreenMode kModes[] = {
     {"SCREEN 0  32x10  15x30", FONT_SCREEN_0, 15, 30, 32, BAND_H / 30},
     {"SCREEN 1  40x12  12x24", FONT_SCREEN_1, 12, 24, 40, BAND_H / 24},
+    {"SCREEN 2  48x15  10x20", FONT_SCREEN_2, 10, 20, 48, BAND_H / 20},
+    {"SCREEN 3  60x19  8x16",  FONT_SCREEN_3,  8, 16, 60, BAND_H / 16},
 };
 static constexpr int kModeCount = sizeof(kModes) / sizeof(kModes[0]);
 
@@ -230,6 +238,8 @@ void setup() {
   renderer.setPalette(kPalettes[g_palette].palette);
   renderer.insertFont(FONT_SCREEN_0, EpdFontFamily(&fontUnscii15x30));
   renderer.insertFont(FONT_SCREEN_1, EpdFontFamily(&fontUnscii12x24));
+  renderer.insertFont(FONT_SCREEN_2, EpdFontFamily(&fontUnscii10x20));
+  renderer.insertFont(FONT_SCREEN_3, EpdFontFamily(&fontUnscii8x16));
   renderer.begin();
 
   // Metrics, printed once. A monospace font should report a text width that is

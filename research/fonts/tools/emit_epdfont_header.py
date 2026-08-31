@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Emits EpdFontData C headers for the PaperS3's two SCREEN sizes (see
-the project README, "SCREEN modes"), bypassing fontconvert.py
+"""Emits EpdFontData C headers for this device's four SCREEN sizes (see
+docs/PORTING_PLAN.md, "Screen geometry"), bypassing fontconvert.py
 entirely (it only accepts FreeType-loadable font files -- TTF/OTF/BDF --
 not raw pixel arrays like the ones this project's own Unscii resizer
 produces).
@@ -55,7 +55,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from generate_screen_fonts import UnsciiScreenFont  # noqa: E402
+from generate_screen_fonts import HexFont, UnsciiScreenFont  # noqa: E402
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..",
@@ -169,38 +169,47 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     u16 = os.path.join(SRC, "unscii-16.hex")
 
+    # This panel is 480x320 in landscape with a 16px status bar, so the
+    # terminal band is 304px. Every column count below divides 480 exactly.
+    #
+    # Note what is NOT here: the PaperS3's 30x60 and 20x40, and the X4-era
+    # portrait 11x22 and 22x44. Those were sized for panels twice this one's
+    # width and would give 16 and 24 columns here, which is not a terminal.
+    #
+    # The 64-column tier from the two earlier devices is gone too, and
+    # deliberately: 480/64 is 7.5, not a whole number of pixels. Rather than
+    # carry the old 32/48/64/80 lineage onto a panel that cannot hold it, the
+    # tiers are re-cut to what 480 actually divides by.
+    # 8x16 goes through plain HexFont, not UnsciiScreenFont, and that is the
+    # point rather than an oversight. unscii-16's source cells ARE 8x16, so the
+    # area-coverage resize would be an identity transform, but the
+    # cap_stem_width post-pass that follows it would still run over glyphs a
+    # human designed to be read at exactly this size. There is nothing for it
+    # to fix and something for it to break. The native path emits the source
+    # bitmap untouched.
+    #
+    # It also answers the "10x20 is the smallest still readable" floor the two
+    # earlier projects set, which was a pixel count on their panels rather than
+    # a physical size. This panel is 480px across about 74mm, so an 8px cell is
+    # 1.23mm wide. The PaperS3's own smallest mode, 12x24, is 1.30mm on its
+    # panel. Nearly the same character on the eye, and unlike a resampled cell
+    # this one is a font drawn for its size.
     jobs = [
-        ("unscii_11x22", UnsciiScreenFont(u16, 8, 16, 11, 22), 11, 22,
-         "Portrait-era SCREEN 1 (48-col): area-coverage resize (1.375x) + stem-width cap + "
-         "cedilla fix. Superseded by the landscape sizes below, kept generated in case portrait "
-         "comes back for some other mode."),
-        ("unscii_22x44", UnsciiScreenFont(u16, 8, 16, 22, 44), 22, 44,
-         "Portrait-era SCREEN 0 (24-col): area-coverage resize (2.75x) + stem-width cap + "
-         "cedilla fix. See unscii_11x22's note above."),
-
-        # Landscape (960x540), same 4-tier column scheme and the same
-        # FONT_SCREEN_MONO_0..3 numbering the X4's config.h used. All four
-        # column counts divide 960 exactly (960 = 2^6*3*5); only 48-col and
-        # 80-col leave a row remainder (960x540's short axis, 540 = 2^2*3^3*5,
-        # isn't a clean multiple of every 2x cell height), split as an equal
-        # top/bottom margin the same way the X4's own README documents for
-        # its own non-exact SCREEN modes: "no border drawn, just empty panel."
-        ("unscii_30x60", UnsciiScreenFont(u16, 8, 16, 30, 60), 30, 60,
-         "SCREEN 0 landscape (32-col): area-coverage resize (3.75x) + stem-width cap + cedilla "
-         "fix. 960/30=32 cols, 540/60=9 rows -- both exact."),
-        ("unscii_20x40", UnsciiScreenFont(u16, 8, 16, 20, 40), 20, 40,
-         "SCREEN 1 landscape (48-col, matches the X4's own default column count): "
-         "area-coverage resize (2.5x) + stem-width cap + cedilla fix. 960/20=48 cols exact; "
-         "540/40=13.5 -> 13 rows (520px), 10px margin top and bottom."),
         ("unscii_15x30", UnsciiScreenFont(u16, 8, 16, 15, 30), 15, 30,
-         "SCREEN 2 landscape (64-col): area-coverage resize (1.875x) + stem-width cap + cedilla "
-         "fix. 960/15=64 cols, 540/30=18 rows -- both exact, the full 960x540 panel with zero "
-         "margin on either axis. This is main.cpp's current bring-up default -- confirmed "
-         "legible on hardware before the other three landscape sizes were even generated."),
+         "SCREEN 0 (32-col): area-coverage resize (1.875x) + stem-width cap + cedilla fix. "
+         "480/15=32 cols exact; 304/30=10 rows (300px), 2px margin top and bottom."),
         ("unscii_12x24", UnsciiScreenFont(u16, 8, 16, 12, 24), 12, 24,
-         "SCREEN 3 landscape (80-col): area-coverage resize (1.5x) + stem-width cap + cedilla "
-         "fix. 960/12=80 cols exact; 540/24=22.5 -> 22 rows (528px), 6px margin top and bottom. "
-         "Still comfortably above this project's own 10x20 'smallest still readable' floor."),
+         "SCREEN 1 (40-col): area-coverage resize (1.5x) + stem-width cap + cedilla fix. "
+         "480/12=40 cols exact; 304/24=12 rows (288px), 8px margin top and bottom. This is the "
+         "boot mode: 40 columns is exactly MSX BASIC's text screen width."),
+        ("unscii_10x20", UnsciiScreenFont(u16, 8, 16, 10, 20), 10, 20,
+         "SCREEN 2 (48-col): area-coverage resize (1.25x) + stem-width cap + cedilla fix. "
+         "480/10=48 cols exact; 304/20=15 rows (300px), 2px margin top and bottom. The same "
+         "cell the two earlier devices treat as their 'smallest still readable' floor."),
+        ("unscii_8x16", HexFont(u16, 8, 16), 8, 16,
+         "SCREEN 3 (60-col): unscii-16 at its NATIVE size, no resampling and no stem-width cap. "
+         "480/8=60 cols exact; 304/16=19 rows (304px), exact, no margin at all. See the note in "
+         "main() for why this one bypasses the resize pipeline entirely."),
     ]
 
     for name, font, cell_w, cell_h, note in jobs:

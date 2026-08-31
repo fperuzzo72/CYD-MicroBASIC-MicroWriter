@@ -222,3 +222,36 @@ status bar can decide this on its own terms when it is designed.
 
 Timings at SCREEN 1, which is a smaller cell than SCREEN 0: full repaint 41ms,
 one cell 160us.
+
+## 2026-08-31 -- All four SCREEN fonts generated, and one of them bypasses the pipeline
+
+`research/fonts/tools/emit_epdfont_header.py` was retargeted from the PaperS3's
+sizes to this panel's four, and all four now render on the board with exact
+metrics: every column count measures 480 pixels, every line height equals its
+cell height.
+
+Two of the four already existed in the PaperS3 build and were regenerated
+rather than copied. They came out **byte-identical** to that build, which is a
+free and rather strong check: the pipeline is deterministic and the retargeting
+changed no behaviour, so the two new sizes came out of exactly the same path
+that was already validated on hardware.
+
+**8x16 deliberately bypasses the resize pipeline.** unscii-16's source cells
+are 8x16, so the area-coverage resize would be an identity transform, but the
+`cap_stem_width` post-pass that follows it would still run over glyphs a human
+drew to be read at precisely this size. Nothing for it to fix, something for it
+to break. It goes through plain `HexFont` and emits the source bitmap untouched.
+
+That also settles the "10x20 is the smallest still readable" floor the two
+earlier projects set, which was a pixel count on their panels rather than a
+physical size. This panel is 480px across roughly 74mm, so an 8px cell is
+1.23mm wide; the PaperS3's own smallest mode is 1.30mm on its panel. Nearly the
+same character on the eye, and unlike a resampled cell this one is a font drawn
+for its size.
+
+The 64-column tier from the two earlier devices is dropped. 480/64 is 7.5, not
+a whole number of pixels, and carrying the old 32/48/64/80 lineage onto a panel
+half the width would have produced tiers nobody can read. The four are re-cut
+to what 480 divides by.
+
+Flash with all four fonts linked: 356589 bytes of 3211264.

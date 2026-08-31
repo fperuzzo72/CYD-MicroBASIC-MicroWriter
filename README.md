@@ -34,9 +34,11 @@ physics. Four palettes ship: **MSX blue** (white on TMS9918 colour 4, which is
 the default), phosphor green, phosphor amber, and paper white, which is what
 the two e-paper devices look like.
 
-The 40-column SCREEN 1 mode happens to be exactly the width of MSX BASIC's text
-screen, so the render demo boots into something shaped like an MSX startup
-screen, with this board's own real numbers in it.
+All four SCREEN modes exist and draw on the panel: 32, 40, 48 and 60 columns,
+each measuring exactly 480 pixels across. The 40-column mode happens to be
+exactly the width of MSX BASIC's text screen, so it is the boot mode, and the
+render demo boots into something shaped like an MSX startup screen with this
+board's own real numbers in it.
 
 No MicroBASIC feature has been ported yet. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See

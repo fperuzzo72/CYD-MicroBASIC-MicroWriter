@@ -40,10 +40,14 @@ bar draws in the base font) leaving a 304-pixel terminal band:
 
 | Mode | Columns x Rows | Cell | Scale from unscii-16 | Font |
 |---|---|---|---|---|
-| `SCREEN 0` | 32 x 10 | 15x30 | 1.875x | `unscii_15x30.h`, **drawn on the panel** |
-| `SCREEN 1` | 40 x 12 | 12x24 | 1.5x | `unscii_12x24.h`, **drawn on the panel** |
-| `SCREEN 2` | 48 x 15 | 10x20 | 1.25x | needs generating |
-| `SCREEN 3` | 60 x 19 | 8x16 | 1.0x, native | unscii-16 unresampled |
+| `SCREEN 0` | 32 x 10 | 15x30 | 1.875x | `unscii_15x30.h` |
+| `SCREEN 1` | 40 x 12 | 12x24 | 1.5x | `unscii_12x24.h`, **boots here** |
+| `SCREEN 2` | 48 x 15 | 10x20 | 1.25x | `unscii_10x20.h` |
+| `SCREEN 3` | 60 x 19 | 8x16 | 1.0x, native | `unscii_8x16.h`, unresampled |
+
+All four are generated and drawn on the panel. Each one measures exactly 480
+pixels across its full column count, and each reports a line height equal to
+its cell height.
 
 Two of the four fonts come straight out of the PaperS3 build with no work at
 all, and `SCREEN 3` needs no resampling because it is unscii-16 at its own
@@ -57,10 +61,18 @@ PaperS3 at 64, each picked for what read well on that panel; 40 is the
 equivalent judgement for this one, and it is also the column count most of the
 home computers this thing is imitating actually had.
 
-The two generated modes have now been drawn on the real panel and measured:
-both come out to exactly 480 pixels across their full column count, so the
-column arithmetic in this table holds. The remaining two still have to be
-generated with `research/fonts/tools/` before they can be judged.
+`SCREEN 3` is the only mode whose rows divide the 304-pixel band exactly, at 19
+rows with no margin, and it is also the only one drawn from unscii-16 at its
+own native size with no resampling and no stem-width cap. Those two facts are
+unrelated and both pleasant.
+
+`SCREEN 1` is the boot mode. 40 columns is exactly MSX BASIC's text width,
+which fell out of the panel arithmetic rather than being aimed at.
+
+The old 64-column tier is gone deliberately: 480 divided by 64 is 7.5, not a
+whole number of pixels. Rather than carry the two earlier devices' 32/48/64/80
+lineage onto a panel that cannot hold it, the tiers are re-cut to what 480
+actually divides by.
 
 ## The render budget
 

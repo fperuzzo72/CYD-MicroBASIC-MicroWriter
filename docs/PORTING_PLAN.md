@@ -85,7 +85,7 @@ Measured on the board, 80MHz SPI, 480x304 terminal band.
 | Full-band `fillRect` alone | 30 ms |
 | On-screen keyboard, all six rows | 37 ms |
 | One terminal row, 60 cols at 8x16 | 3.7 ms |
-| First paint, terminal and keyboard | 143 ms |
+| First paint, terminal and keyboard | 100 ms |
 | Full screen, terminal and keyboard | 91 ms |
 
 The 30ms is the hardware floor: 480x304 pixels at 16bpp over 80MHz SPI is

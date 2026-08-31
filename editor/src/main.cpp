@@ -113,6 +113,27 @@ static void applyBand() {
   screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H);
 }
 
+static int oskTopY() { return SCREEN_H - OSK_H; }
+
+// Whether a terminal row has any business being drawn.
+//
+// The grid keeps its full height and the keyboard is painted over the bottom of
+// it, so the rows behind the keyboard must not be drawn at all. Drawing them is
+// not merely wasted: it erases the keyboard, which is what happened the moment
+// a keystroke started repainting the whole terminal instead of one row. The
+// keys kept working, because osk.cpp hit-tests coordinates and has no idea it
+// is no longer on screen, so the machine looked like it had lost its keyboard
+// while still responding to it.
+//
+// A row that straddles the keyboard's top edge counts as hidden. Skipping it
+// leaves the keyboard's own top edge showing there, which is right; drawing it
+// would put a stripe of text across the top row of keys.
+static bool rowVisible(const int r) {
+  if (!g_oskVisible) return true;
+  const int top = screenEditorMarginY() + r * screenEditorCellH();
+  return top + screenEditorCellH() <= oskTopY();
+}
+
 // One row, composed and pushed in a single transfer. This is the path a
 // keystroke takes, and the reason drawTextOpaque exists.
 static void drawTerminalRow(const int r) {
@@ -132,6 +153,9 @@ static void drawCursor(const bool on) {
   // type", and nothing is; on a program that repaints cells in place it reads
   // as a block stuck to whatever it drew last.
   if (tbIsRunning()) return;
+  // And none where the keyboard is: the blink would otherwise punch a hole
+  // through the keys twice a second.
+  if (!rowVisible(screenEditorGetCursorRow())) return;
   const int cx = screenEditorGetCursorCol() * screenEditorCellW();
   const int cy = screenEditorMarginY() + screenEditorGetCursorRow() * screenEditorCellH();
   if (on) {
@@ -143,7 +167,9 @@ static void drawCursor(const bool on) {
 
 static void drawTerminal() {
   const int rows = screenEditorRows();
-  for (int r = 0; r < rows; r++) drawTerminalRow(r);
+  for (int r = 0; r < rows; r++) {
+    if (rowVisible(r)) drawTerminalRow(r);
+  }
   // The band's centring margin, above and below the rows, is not covered by any
   // row's own rectangle and would otherwise keep whatever the previous SCREEN
   // mode left there.
@@ -152,8 +178,10 @@ static void drawTerminal() {
   const int used = rows * screenEditorCellH();
   const int margin = screenEditorMarginY() - top;
   if (margin > 0) renderer.fillRect(0, top, SCREEN_W, margin, false);
-  const int below = top + height - (screenEditorMarginY() + used);
-  if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
+  if (!g_oskVisible) {
+    const int below = top + height - (screenEditorMarginY() + used);
+    if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
+  }
 }
 
 static void drawStatusBar() {

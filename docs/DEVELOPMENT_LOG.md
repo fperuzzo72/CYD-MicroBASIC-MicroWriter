@@ -482,3 +482,40 @@ The `microwriter` env stops building here. What it excludes is exactly what
 `main.cpp` draws, and the replacement is milestone 7. It fails on one `#error`
 saying so rather than eighteen linker errors, which is the difference between a
 note and a puzzle.
+
+## 2026-08-31 -- The keyboard vanished, and the fix was the optimisation
+
+Typing the first character of a program line erased the on-screen keyboard,
+while the keys kept responding to taps in the space where they used to be.
+
+The cause is the interpreter integration, not the keyboard. Milestone 4 redrew
+one terminal row per keystroke; milestone 5 routes keystrokes through
+`processAllInput()`, which can change any part of the screen, so `main.cpp`
+started repainting the whole terminal after each one. The grid keeps its full
+height and the keyboard is painted over the bottom of it, so repainting the
+grid paints over the keyboard. `osk.cpp` hit-tests coordinates and has no idea
+whether it is still on screen, which is why the machine looked like it had lost
+its keyboard while still obeying it.
+
+The obvious fix is to redraw the keyboard afterwards, at 37ms a keystroke. The
+right one is to stop drawing the rows that are behind it, which cannot erase
+what it does not touch. That is also the 44ms saving noted two entries ago as
+worth one condition in the row loop, so the bug and the optimisation are the
+same change. First paint went from 145ms to 100ms.
+
+A row straddling the keyboard's top edge counts as hidden: skipping it leaves
+the keyboard's own edge showing, where drawing it would put a stripe of text
+across the top row of keys.
+
+The blinking cursor needed the same guard for the same reason. With the cursor
+on a row behind the keyboard it was punching a block through the keys twice a
+second.
+
+**What this exposes is not a bug, it is the cost of a decision.** With the
+keyboard up at SCREEN 3 only seven of the nineteen rows are visible, and the
+terminal does not scroll until the cursor reaches row 18. So typing past the
+seventh line puts the cursor somewhere real but invisible until the keyboard is
+folded away. That is the accepted consequence of drawing the full grid, which
+is right once a physical keyboard is the normal way in, and awkward until
+milestone 9 makes that true. `applyBand()` is still one line from making the
+band follow the keyboard if the wait proves annoying.

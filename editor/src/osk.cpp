@@ -120,14 +120,26 @@ const KeyDef kRow2[] = {
 // Right (all three pulled one half-unit left of the previous draft to make
 // that 3-column match, not just Up-over-Down alone).
 //
-// Deliberately UNCHANGED by the row 0-2 rework above (Esc moving out,
-// Tab/Caps shrinking, Enter growing): shrinking Left Shift to match would
-// shift everything after it and break the / -> Left / Up -> Down / RShift
-// -> Right alignment above without a specific replacement width to aim
-// for, so this row (and row 4) is left exactly as it was rather than
-// guessed at.
+// Rebalanced for the FNK0103N so the row reaches the right edge.
+//
+// It used to sum to 31 of 32 half-units, leaving a ragged gap at the right on
+// both this row and row 4, while row 0's Enter ran to the edge. It also made
+// the right Shift 2 units, which at this panel's 15px unit is 30 pixels: only
+// "Sh" of its label fitted.
+//
+// The naive fix, widening the right Shift alone, would have broken the
+// three-column cluster this row and row 4 line up in (/ over Left, Up over
+// Down, right Shift over Right). Instead the width comes out of the LEFT
+// Shift, 7 to 6, which has plenty to spare, and row 4's Space gives up one
+// unit the same way. Both rows now sum to 32, both right-hand keys are 4 units
+// (60px, enough for the full "Shift"), and every column of the cluster still
+// lines up:
+//
+//   row 3:  Shift(6) | 10 keys      | /  | ^  | Shift(4)
+//   row 4:  Ctrl(5) Alt(3) Space(16)| <  | v  | >    (4)
+//   units:  0                     24| 24 | 26 | 28  32
 const KeyDef kRow3[] = {
-    {0, 7, 1, KeyKind::Shift, "Shift"},
+    {0, 6, 1, KeyKind::Shift, "Shift"},
     {0x1D, 2, 1, KeyKind::Normal, nullptr}, {0x1B, 2, 1, KeyKind::Normal, nullptr},
     {0x06, 2, 1, KeyKind::Normal, nullptr}, {0x19, 2, 1, KeyKind::Normal, nullptr},
     {0x05, 2, 1, KeyKind::Normal, nullptr}, {0x11, 2, 1, KeyKind::Normal, nullptr},
@@ -135,7 +147,7 @@ const KeyDef kRow3[] = {
     {HID_COMMA, 2, 1, KeyKind::Normal, nullptr}, {HID_PERIOD, 2, 1, KeyKind::Normal, nullptr},
     {HID_SLASH, 2, 1, KeyKind::Normal, nullptr},
     {HID_UP, 2, 1, KeyKind::Normal, "^"},
-    {0, 2, 1, KeyKind::Shift, "Shift"},
+    {0, 4, 1, KeyKind::Shift, "Shift"},
 };
 
 // Row 4: Ctrl (5 half-units, was 4 -- joins the same cascade the other
@@ -146,10 +158,10 @@ const KeyDef kRow3[] = {
 const KeyDef kRow4[] = {
     {0, 5, 1, KeyKind::Ctrl, "Ctrl"},
     {0, 3, 1, KeyKind::Alt, "Alt"},
-    {HID_SPACE, 17, 1, KeyKind::Normal, ""},
+    {HID_SPACE, 16, 1, KeyKind::Normal, ""},
     {HID_LEFT, 2, 1, KeyKind::Normal, "<"},
     {HID_DOWN, 2, 1, KeyKind::Normal, "v"},
-    {HID_RIGHT, 2, 1, KeyKind::Normal, ">"},
+    {HID_RIGHT, 4, 1, KeyKind::Normal, ">"},
 };
 
 struct Row {
@@ -275,7 +287,12 @@ void oskDraw() {
   // clearly as separate targets with a bit more breathing room between
   // them, and rounded corners read less like a rigid uniform grid.
   constexpr int kInset = 4;
-  constexpr int kCornerRadius = 6;
+  // Square, not rounded. On the PaperS3 this was 6, and it looked right there.
+  // Here the Shift-hint that digit and symbol keys carry in their top-right
+  // corner lands ON the curve, because the keys are half the size and the
+  // radius was not. Squaring the keycap is the fix that costs nothing; shrinking
+  // the radius would only make the collision less obvious.
+  constexpr int kCornerRadius = 0;
   constexpr int kBorderWidth = 2;
 
   for (int r = 0; r < kRowCount; r++) {

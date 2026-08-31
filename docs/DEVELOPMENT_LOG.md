@@ -303,3 +303,46 @@ the next character. A plain keystroke changes one row of text and nothing else.
 The echo area in `main.cpp` is not the terminal and none of it should survive:
 `screen_editor.cpp` is milestone 4. It exists to show that a tapped key becomes
 a character.
+
+## 2026-08-31 -- Two keyboard fixes from actually using it
+
+Both came from tapping the thing, which is the only way either would have
+surfaced.
+
+**Square keycaps, not rounded.** The PaperS3 uses a 6px corner radius and it
+looks right there. Here the small Shift-hint that digit and symbol keys carry
+in their top-right corner lands on the curve, because the keys are half the
+size and the radius was not scaled with them. Radius goes to 0.
+
+That needed a guard in the renderer: TFT_eSPI's round-rect primitives draw four
+quarter-circle arcs and a zero radius is not a case they are written for, so
+`fillRoundedRect` and `drawRoundedRect` take a plain-rectangle path when the
+radius is zero or less. `drawRoundedRect` also had to stop its per-ring radius
+going negative on the inner rings of a thick border.
+
+It came with a speedup nobody was looking for: the keyboard's draw dropped from
+49ms to 34ms, a third off, because a filled rectangle is one block where a
+rounded one is four arcs walked pixel by pixel.
+
+**Rows 3 and 4 now reach the right edge.** Both summed to 31 of 32 half-units,
+leaving a ragged gap while row 0's Enter ran to the edge, and the right Shift at
+2 units is 30 pixels on this panel, wide enough for "Sh" and no more.
+
+Widening the right Shift alone would have broken the three-column cluster rows 3
+and 4 line up in (`/` over Left, Up over Down, right Shift over Right). The
+arithmetic says why the original was stuck: with the left Shift at width `a`,
+keeping Up above Down forces Space to `a+10`, and both right-hand keys then come
+out at `10-a` each. At `a=7` that is 2 and 2, which is where they were.
+
+So the width comes out of the left Shift, 7 to 6, which had plenty to spare.
+Both right-hand keys become 4 units, 60px, and every column of the cluster still
+lines up:
+
+```
+row 3:  Shift(6) | 10 keys      | /  | ^  | Shift(4)
+row 4:  Ctrl(5) Alt(3) Space(16)| <  | v  | >    (4)
+units:  0                     24| 24 | 26 | 28  32
+```
+
+Confirmed on the panel before this: the keys are hittable with a fingertip, not
+just a fingernail, and one-shot Shift behaves.

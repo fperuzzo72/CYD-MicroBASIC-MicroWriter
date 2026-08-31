@@ -75,16 +75,32 @@ uint16_t TftRenderer::resolveColor(const Color color) const {
   return palette_.ink;
 }
 
+// A radius of zero means a square corner, and it has to be handled rather than
+// passed through: TFT_eSPI's round-rect primitives draw four quarter-circle
+// arcs and a zero radius is not a case they are written for. Callers use zero
+// deliberately (osk.cpp does), so it takes the plain-rectangle path.
 void TftRenderer::fillRoundedRect(const int x, const int y, const int width, const int height,
                                   const int cornerRadius, const Color color) const {
-  tft_.fillRoundRect(x, y, width, height, cornerRadius, resolveColor(color));
+  const uint16_t colour = resolveColor(color);
+  if (cornerRadius <= 0) {
+    tft_.fillRect(x, y, width, height, colour);
+    return;
+  }
+  tft_.fillRoundRect(x, y, width, height, cornerRadius, colour);
 }
 
 void TftRenderer::drawRoundedRect(const int x, const int y, const int width, const int height,
                                   const int lineWidth, const int cornerRadius, const bool state) const {
   const uint16_t colour = state ? palette_.ink : palette_.paper;
   for (int i = 0; i < lineWidth; i++) {
-    tft_.drawRoundRect(x + i, y + i, width - 2 * i, height - 2 * i, cornerRadius - i, colour);
+    // Each inset ring needs a radius one smaller, and it must not go negative
+    // on the inner rings of a thick border round a small radius.
+    const int r = cornerRadius - i;
+    if (r <= 0) {
+      tft_.drawRect(x + i, y + i, width - 2 * i, height - 2 * i, colour);
+    } else {
+      tft_.drawRoundRect(x + i, y + i, width - 2 * i, height - 2 * i, r, colour);
+    }
   }
 }
 

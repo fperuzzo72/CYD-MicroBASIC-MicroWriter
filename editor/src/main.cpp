@@ -76,15 +76,22 @@ struct NamedPalette {
   TftRenderer::Palette palette;
 };
 static const NamedPalette kPalettes[] = {
+    {"msx", TftRenderer::MsxBlue},
     {"green", TftRenderer::PhosphorGreen},
     {"amber", TftRenderer::PhosphorAmber},
     {"paper", TftRenderer::PaperWhite},
 };
 static constexpr int kPaletteCount = sizeof(kPalettes) / sizeof(kPalettes[0]);
 
-static int g_mode = 0;
+// Boots in SCREEN 1, the 40-column mode, because 40 columns is exactly what
+// MSX BASIC's text screen had. Not a coincidence worth engineering around, but
+// a pleasant one.
+static int g_mode = 1;
 static int g_palette = 0;
+static bool g_showPattern = false;
 static uint32_t g_lastRepaintUs = 0;
+static int g_cursorRow = 0;
+static int g_cursorCol = 0;
 
 // A row of printable ASCII, offset per row so the pattern is not a repeating
 // stripe and every glyph in the font gets drawn somewhere.
@@ -97,50 +104,101 @@ static void fillPatternRow(char* out, const int cols, const int rowIndex) {
 
 static void drawStatusBar() {
   const ScreenMode& m = kModes[g_mode];
-  renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, true);
+  // Paper background rather than a solid ink bar. On a home micro the screen is
+  // one background colour throughout, and a bright bar across the top breaks
+  // the illusion the palette is there to create. The real status bar, when it
+  // is designed, should decide this on its own terms.
+  renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
 
   char line[80];
-  snprintf(line, sizeof(line), " %s  %s  %lu ms", m.name, kPalettes[g_palette].name,
-           static_cast<unsigned long>(g_lastRepaintUs / 1000));
+  snprintf(line, sizeof(line), " %s  %s  %s  %lu ms", m.name, kPalettes[g_palette].name,
+           g_showPattern ? "pattern" : "boot", static_cast<unsigned long>(g_lastRepaintUs / 1000));
 
   // The status bar uses a TFT_eSPI built-in font rather than an EpdFont: at 16
   // pixels tall there is no unscii size that fits yet, and generating one just
   // for the bar would be work spent before the bar's design is settled.
   tft.setTextFont(2);
-  tft.setTextColor(renderer.getPalette().paper, renderer.getPalette().ink);
+  tft.setTextColor(renderer.getPalette().ink, renderer.getPalette().paper);
   tft.setTextDatum(TL_DATUM);
   tft.drawString(line, 2, 0);
 }
 
-static void drawGrid() {
+// The boot screen, in the shape MSX BASIC used: what the machine is, how much
+// memory is free, a blank line, then Ok and the cursor.
+//
+// The numbers are real, read from this board at this moment, which is the
+// whole point of showing it rather than mocking it up somewhere else.
+static void composeBootLines(char lines[][64], int& count, const ScreenMode& m) {
+  count = 0;
+  snprintf(lines[count++], 64, "MicroBASIC 0.1");
+  if (m.cols >= 40) {
+    snprintf(lines[count++], 64, "Freenove FNK0103N, ESP32, %dx%d", SCREEN_W, SCREEN_H);
+  } else {
+    snprintf(lines[count++], 64, "FNK0103N ESP32 %dx%d", SCREEN_W, SCREEN_H);
+  }
+  snprintf(lines[count++], 64, "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
+  lines[count++][0] = '\0';
+  snprintf(lines[count++], 64, "Ok");
+}
+
+// A row of printable ASCII, offset per row so the pattern is not a repeating
+// stripe and every glyph in the font gets drawn somewhere. This is the glyph
+// correctness test: the unscii cells are 15 and 12 wide, neither a multiple of
+// eight, which is exactly the case that shears if the bitstream is read as
+// byte-aligned per row.
+static void fillPatternRow(char* out, const int cols, const int rowIndex);
+
+static void drawScreen() {
   const ScreenMode& m = kModes[g_mode];
   char row[128];
 
-  // No separate clear: each row is composed with its own background and pushed
-  // as one image, so the band never needs wiping first. That is worth roughly
-  // 30ms on its own, which is what the full-band fillRect used to cost.
   const uint32_t start = micros();
-  for (int r = 0; r < m.rows; r++) {
-    fillPatternRow(row, m.cols, r);
-    const int rowY = BAND_Y + r * m.cellH;
-    renderer.drawTextOpaque(m.fontId, 0, rowY, SCREEN_W, m.cellH, 0, rowY, row);
+
+  if (g_showPattern) {
+    for (int r = 0; r < m.rows; r++) {
+      fillPatternRow(row, m.cols, r);
+      const int rowY = BAND_Y + r * m.cellH;
+      renderer.drawTextOpaque(m.fontId, 0, rowY, SCREEN_W, m.cellH, 0, rowY, row);
+    }
+    g_cursorRow = -1;
+  } else {
+    char lines[8][64];
+    int lineCount = 0;
+    composeBootLines(lines, lineCount, m);
+    for (int r = 0; r < m.rows; r++) {
+      const int rowY = BAND_Y + r * m.cellH;
+      const char* text = (r < lineCount) ? lines[r] : "";
+      renderer.drawTextOpaque(m.fontId, 0, rowY, SCREEN_W, m.cellH, 0, rowY, text);
+    }
+    // MSX leaves the cursor on the line after Ok, at column 0.
+    g_cursorRow = lineCount;
+    g_cursorCol = 0;
   }
+
   const uint32_t end = micros();
   g_lastRepaintUs = end - start;
 
-  // A single cell, which is what a keystroke actually costs. The number that
-  // decides whether typing feels immediate.
   const uint32_t cellStart = micros();
-  renderer.drawTextOpaque(m.fontId, 0, BAND_Y, m.cellW, m.cellH, 0, BAND_Y, "A");
+  renderer.drawTextOpaque(m.fontId, 0, BAND_Y, m.cellW, m.cellH, 0, BAND_Y,
+                          g_showPattern ? "A" : "M");
   const uint32_t cellUs = micros() - cellStart;
 
   drawStatusBar();
 
-  const int glyphs = m.cols * m.rows;
-  Serial.printf("%s %s | full repaint %lu us (%lu ms) for %d glyphs | one cell %lu us\n", m.name,
-                kPalettes[g_palette].name, static_cast<unsigned long>(g_lastRepaintUs),
-                static_cast<unsigned long>(g_lastRepaintUs / 1000), glyphs,
+  Serial.printf("%s %s %s | full repaint %lu us (%lu ms) | one cell %lu us\n", m.name,
+                kPalettes[g_palette].name, g_showPattern ? "pattern" : "boot",
+                static_cast<unsigned long>(g_lastRepaintUs),
+                static_cast<unsigned long>(g_lastRepaintUs / 1000),
                 static_cast<unsigned long>(cellUs));
+}
+
+// A solid block, the way a home micro's cursor looked. Cheap enough to blink at
+// any rate we like: one cell is 240us.
+static void drawCursor(const bool on) {
+  if (g_cursorRow < 0) return;
+  const ScreenMode& m = kModes[g_mode];
+  if (g_cursorRow >= m.rows) return;
+  renderer.fillRect(g_cursorCol * m.cellW, BAND_Y + g_cursorRow * m.cellH, m.cellW, m.cellH, on);
 }
 
 void setup() {
@@ -186,22 +244,36 @@ void setup() {
   }
   Serial.printf("heap: %u KB free\n", static_cast<unsigned>(ESP.getFreeHeap() / 1024));
 
-  drawGrid();
+  drawScreen();
 }
 
 void loop() {
+  // Three touch zones across the width: SCREEN mode, content, palette.
   uint16_t x = 0, y = 0;
   if (tft.getTouch(&x, &y)) {
-    if (x < SCREEN_W / 2) {
+    if (x < SCREEN_W / 3) {
       g_mode = (g_mode + 1) % kModeCount;
+    } else if (x < 2 * SCREEN_W / 3) {
+      g_showPattern = !g_showPattern;
     } else {
       g_palette = (g_palette + 1) % kPaletteCount;
       renderer.setPalette(kPalettes[g_palette].palette);
     }
-    drawGrid();
+    drawScreen();
     // Long enough that one press is one change on a resistive panel, which
     // chatters far more than the capacitive one on the PaperS3.
     delay(350);
+    return;
+  }
+
+  // The cursor blink also exercises the single-cell path continuously, which is
+  // the one the terminal will lean on hardest once it exists.
+  static uint32_t lastBlink = 0;
+  static bool cursorOn = true;
+  if (millis() - lastBlink > 500) {
+    lastBlink = millis();
+    cursorOn = !cursorOn;
+    drawCursor(cursorOn);
   }
   delay(10);
 }

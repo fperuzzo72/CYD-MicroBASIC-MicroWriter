@@ -197,3 +197,28 @@ written next to it.
 
 Next: generate the 10x20 and 8x16 unscii sizes so all four SCREEN modes exist,
 then milestone 3, touch and the on-screen keyboard.
+
+## 2026-08-31 -- An MSX palette, and what the machine will actually look like
+
+The render demo now boots into a screen shaped like MSX BASIC's: what the
+machine is, how much memory is free, a blank line, `Ok`, and a blinking block
+cursor. The numbers in it are read from the board at that moment rather than
+mocked up, which is the point of showing it on the panel instead of in a
+mockup somewhere else.
+
+Colours are the real TMS9918 ones: white (colour 15) on dark blue (colour 4,
+RGB 89,85,224). That blue is a periwinkle rather than the navy people tend to
+remember, and it is what the machine actually put on a television. 0x5ABC in
+RGB565.
+
+SCREEN 1 here is 40 columns, which is exactly MSX BASIC's text width. That fell
+out of the panel arithmetic rather than being aimed at, but it is a good reason
+to make SCREEN 1 the boot mode.
+
+The status bar draws on the paper colour rather than as a solid ink bar. On a
+home micro the screen is one background colour throughout and a bright bar
+across the top breaks the illusion the palette exists to create. The real
+status bar can decide this on its own terms when it is designed.
+
+Timings at SCREEN 1, which is a smaller cell than SCREEN 0: full repaint 41ms,
+one cell 160us.

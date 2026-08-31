@@ -51,6 +51,7 @@ class TftRenderer {
   static const Palette PhosphorGreen;  // the home-micro look, and the default
   static const Palette PhosphorAmber;  // the terminal look
   static const Palette PaperWhite;     // what the PaperS3 and the X4 look like
+  static const Palette MsxBlue;        // white on TMS9918 colour 4, the MSX BASIC screen
 
   explicit TftRenderer(TFT_eSPI& tft) : tft_(tft) {}
 

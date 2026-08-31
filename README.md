@@ -30,8 +30,13 @@ on the board; how that got from an initial 196ms is in
 `docs/PORTING_PLAN.md`, "The render budget".
 
 Because the panel is backlit and colour, it is no longer black on white by
-physics. Three palettes ship: phosphor green (the default), phosphor amber, and
-paper white, which is what the two e-paper devices look like.
+physics. Four palettes ship: **MSX blue** (white on TMS9918 colour 4, which is
+the default), phosphor green, phosphor amber, and paper white, which is what
+the two e-paper devices look like.
+
+The 40-column SCREEN 1 mode happens to be exactly the width of MSX BASIC's text
+screen, so the render demo boots into something shaped like an MSX startup
+screen, with this board's own real numbers in it.
 
 No MicroBASIC feature has been ported yet. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See

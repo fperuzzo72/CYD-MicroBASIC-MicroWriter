@@ -8,6 +8,11 @@
 const TftRenderer::Palette TftRenderer::PhosphorGreen = {0x2FE7, 0x0000};
 const TftRenderer::Palette TftRenderer::PhosphorAmber = {0xFD60, 0x0000};
 const TftRenderer::Palette TftRenderer::PaperWhite = {0x0000, 0xFFFF};
+// MSX BASIC boots white (TMS9918 colour 15) on dark blue (colour 4). That blue
+// is RGB 89,85,224 in the usual TMS9918 palette, which is a periwinkle rather
+// than the navy people tend to remember, and is what the machine actually put
+// on a television. 0x5ABC is it in RGB565.
+const TftRenderer::Palette TftRenderer::MsxBlue = {0xFFFF, 0x5ABC};
 
 void TftRenderer::begin() {
   // Required for every pushImage in this file, and a silent wrong-colour bug

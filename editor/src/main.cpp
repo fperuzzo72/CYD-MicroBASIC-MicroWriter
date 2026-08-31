@@ -922,13 +922,29 @@ void startEditorFromCommand() {
   screenDirty = true;
 }
 
-// Neither of these is coming. Both exist for the PaperS3's shared dual-boot
-// layout with CrossPoint: one switches firmware slots, the other browses that
-// reader's library. This board has a single app partition and no CrossPoint.
-// They stay reachable as commands only because terminal_input.cpp dispatches
-// them; the honest answer is that they have nowhere to go.
-void startReaderSwitchFromCommand() { notify("?READER is PaperS3 only"); }
-void startVcFromCommand() { notify("?VC is PaperS3 only"); }
+// READER switches firmware slots in the PaperS3's shared dual-boot layout with
+// CrossPoint. This board has a single app partition and no reader, so there is
+// nowhere for it to go.
+void startReaderSwitchFromCommand() { notify("?READER needs a second app slot"); }
+
+// VC opens the programs list with Enter bound to LOAD rather than to the
+// editor, which is what file_browser.cpp's browserStartVc() already does. It
+// was reachable all along; only this function was in the way.
+//
+// It was stubbed out as "PaperS3 only" on the assumption that it belonged with
+// READER, from the name sitting next to it and nothing else. It does not: VC is
+// a Volkov Commander, a program picker, and has no connection to CrossPoint at
+// all. The X4 draws it as its own multi-column view (vc_browser.cpp); the
+// PaperS3 reuses the file browser for it, which is what is ported here, and
+// file_browser.h explains why that is the better trade.
+//
+// Typed-only, deliberately, and that is file_browser.h's reasoning kept: it is
+// a shortcut for loading a program, not a second way into the editor, so it
+// gets no status-bar button.
+void startVcFromCommand() {
+  browserStartVc();
+  screenDirty = true;
+}
 
 // One bar handler, used both from loop() and from inside a running program.
 //

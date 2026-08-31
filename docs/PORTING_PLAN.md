@@ -275,7 +275,11 @@ compiling.
 - `ota_apps.cpp` and `docs/DUAL_BOOT.md`. Both exist for the PaperS3's shared
   dual-boot contract with CrossPoint. This board has one app partition and one
   firmware.
-- `vc_browser.cpp` and the CrossPoint reading-progress side of sync.
+- `vc_browser.cpp`, the X4's own multi-column Volkov-Commander view, and the
+  CrossPoint reading-progress side of sync. **VC itself is here**: the PaperS3
+  reuses the file browser for it rather than carrying a second list renderer,
+  and that is what `browserStartVc()` does. Typing `VC` opens the programs list
+  with Enter bound to LOAD.
 - Everything in `freeink-sdk`. It is an e-paper SDK; nothing in it applies. Its
   useful abstraction, the `hal/` seam, is worth copying as a shape rather than
   as code.

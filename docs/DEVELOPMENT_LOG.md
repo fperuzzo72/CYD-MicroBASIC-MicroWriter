@@ -1019,3 +1019,36 @@ question and giving different answers, so it is one function now,
 That is the fourth time on this port that the same fix has applied: a condition
 or a chain written out in more than one place drifted, and factoring it into one
 function was both the bug fix and the guard against the next one.
+
+## 2026-08-31 -- VC was here the whole time, behind a stub that said otherwise
+
+Typing `VC` answered "?VC is PaperS3 only". That was wrong in every part of it,
+and it was my writing, from milestone 5.
+
+VC is a Volkov Commander: a picker for the programs directory where Enter hands
+the file to the interpreter with LOAD rather than opening it in the editor. It
+has no connection to CrossPoint, to dual boot, or to the PaperS3 specifically.
+
+The stub happened because `startVcFromCommand` sat next to
+`startReaderSwitchFromCommand` in the list of undefined symbols, and READER
+genuinely is PaperS3-only: it switches firmware slots in that device's shared
+layout with CrossPoint. I read one, assumed the pair, and wrote a message
+asserting it. Nothing in the code said that; I did not look.
+
+What makes it worse than a missing feature is that the machine repeated the
+claim on demand. A stub that says "not built yet" is a to-do list. A stub that
+says "this belongs to another device" is a wrong answer to a question, and the
+person asking has no reason to doubt it.
+
+The port needed one line. `browserStartVc()` was already in `file_browser.cpp`,
+ported and working, since milestone 6: it opens the programs list with
+`loadOnChoose` set. The PaperS3 reuses the file browser for VC rather than
+carrying the X4's separate multi-column renderer (`vc_browser.cpp` plus
+`drawVcBrowser`), and `file_browser.h` explains that trade in its own comment,
+which I had read past.
+
+Typed-only, and that is kept: it is a shortcut for loading a program, not a
+second way into the editor, so it gets no status-bar button.
+
+READER's message is reworded too. "PaperS3 only" was accurate but useless;
+"needs a second app slot" says what is actually missing.

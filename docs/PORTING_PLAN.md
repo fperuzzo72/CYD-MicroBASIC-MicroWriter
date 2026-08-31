@@ -66,11 +66,15 @@ The single hardest constraint. 3MB of app partition, against a PaperS3 binary
 of roughly 1.7MB that carries WiFi, an HTTP server, a NimBLE HID host, the
 interpreter and its fonts.
 
-Measured so far, with the bring-up only:
+Measured so far, on the real board:
 
-| Build | Flash | RAM |
-|---|---|---|
-| Milestone 1 bring-up | 358KB of 3MB | 22KB of 320KB |
+| Build | Flash | Static RAM | Free heap at boot |
+|---|---|---|---|
+| Milestone 1 bring-up | 358257 of 3211264 (11.2%) | 22236 of 327680 | 335KB |
+
+The free-heap figure is the one that governs the render layer: it is what is
+actually available at runtime, after the WiFi and BLE stacks are not yet in the
+picture. Expect it to fall sharply once they are.
 
 The four proportional prose fonts are the obvious risk: `notosans_*` and
 `ubuntu_*` in `port-staging/lib/EpdFont/builtinFonts/` are about 2.6MB of
@@ -90,7 +94,9 @@ Each one ends with something demonstrable on the board, not with a file
 compiling.
 
 1. **Hardware bring-up.** Panel geometry, touch calibration, SD mount.
-   Written, compiles, not yet flashed. `editor/src/main.cpp`.
+   **Done**, except the SD probe, which needs a card. Panel geometry and touch
+   confirmed on the board on 2026-08-31; see docs/HARDWARE.md.
+   `editor/src/main.cpp`.
 2. **Render layer.** A TFT-backed renderer offering the same primitives as
    `GfxRenderer`, plus a glyph blit that expands EpdFont's 1bpp glyphs into
    16-bit colour with a foreground and background. Done right, `EpdFont`,

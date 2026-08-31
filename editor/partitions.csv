@@ -4,30 +4,67 @@
 # dual-boot contract with CrossPoint. This board is this firmware's alone, and
 # the 4MB ceiling is the dominant fact of the whole port.
 #
-# One app partition, `factory`, of 3MB, and no OTA pair. The reasoning is
-# arithmetic: about 3.9MB is left after bootloader, table and NVS, so an OTA
-# pair would give ~1.9MB a slot. The PaperS3 binary sits at ~1.7MB with WiFi,
-# the web server, the NimBLE HID host, the interpreter and fonts, and there is
-# no margin for discovering mid-port that it does not fit. Revisit once this
-# build's real size is measured on the board: if it lands well under 1.8MB, an
-# OTA pair becomes worth it, because updating over WiFi beats the cable on a
-# board with an awkward boot button.
+# One app partition, `factory`, and no OTA pair. The reasoning is arithmetic:
+# about 3.9MB is left after bootloader, table and NVS, so an OTA pair would
+# give ~1.9MB a slot. The PaperS3 binary sits at ~1.7MB with WiFi, the web
+# server, the NimBLE HID host, the interpreter and fonts, and there is no
+# margin for discovering mid-port that it does not fit. Revisit once this
+# build's real size is measured: if it lands well under 1.8MB, an OTA pair
+# becomes worth it, because updating over WiFi beats the cable on a board with
+# an awkward boot button.
 #
-# NVS is 32K, not the 20K in Arduino's stock huge_app.csv. That lesson is
+# --- Why the app sits at 0x10000, and why NVS sits AFTER it ---
+#
+# Two separate pieces of tooling pin down this layout, and both were found the
+# hard way on 2026-08-31 (see DEVELOPMENT_LOG.md).
+#
+# First, PlatformIO does NOT read this file to decide where to write the app.
+# Its builder (platform-espressif32/builder/main.py, line 305) does:
+#
+#     ESP32_APP_OFFSET = board.get("upload.offset_address", "0x10000")
+#
+# a hardcoded default, overridable only by board_upload.offset_address. An app
+# partition also has to be 64K-aligned, so anything that pushes the app past
+# 0x10000 lands it at 0x20000 while esptool keeps writing at 0x10000. The
+# bootloader then finds erased flash where the app should be and resets
+# forever, silently, with no panic and no serial output. The board looks dead,
+# because the code that switches the backlight on is never reached.
+#
+# Second, the Arduino framework's own build script
+# (framework-arduinoespressif32/tools/platformio-build.py, line 215) adds:
+#
+#     ("0xe000", boot_app0.bin)
+#
+# unconditionally, with no flag to turn it off. So 0xe000-0x10000 gets 8K
+# written into it on every single upload, whatever this file says lives there.
+# Putting NVS across that range means every reflash wipes 8K out of the middle
+# of it, taking touch calibration and saved WiFi credentials with it.
+#
+# Hence: otadata is declared at 0xe000, which is honestly what that write is,
+# and NVS moves to after the app where it gets its full 32K and nothing steps
+# on it. There is a factory app and no OTA pair, so otadata is never updated at
+# runtime; an all-0xFF otadata is invalid, and an invalid otadata boots factory,
+# which is the intended behaviour rather than a happy accident.
+#
+# 32K of NVS, not the 20K in Arduino's stock huge_app.csv. That lesson is
 # already paid for on the PaperS3: 20K will not hold BLE bonds, saved WiFi
 # credentials and the radio's own PHY calibration blob at the same time, and
 # the calibration write failing silently is what stopped WiFi associating at
 # all. See MicroWriter-BASIC-PaperS3's DEVELOPMENT_LOG, "WiFi never actually
 # connected".
 #
+# coredump is small and sits at 0x9000 on purpose: that 20K between the
+# partition table and the boot_app0 slot cannot hold anything else and would
+# otherwise be stranded. Arduino builds do not enable core dumps anyway, so it
+# is the partition whose size costs least.
+#
 # The spiffs partition is spare room, not a plan. Touch calibration and
 # preferences live in NVS (ten bytes do not need a filesystem), and user files
-# live on the SD card, the same as in both earlier projects. It is here
-# because a 4MB layout is painful to change later and leaving the space
-# unallocated buys nothing.
+# live on the SD card, the same as in both earlier projects.
 #
 # Name,     Type, SubType,  Offset,    Size,      Flags
-nvs,        data, nvs,      0x9000,    0x8000,
-factory,    app,  factory,  0x20000,   0x300000,
-spiffs,     data, spiffs,   0x320000,  0xD0000,
-coredump,   data, coredump, 0x3F0000,  0x10000,
+coredump,   data, coredump, 0x9000,    0x5000,
+otadata,    data, ota,      0xE000,    0x2000,
+factory,    app,  factory,  0x10000,   0x310000,
+nvs,        data, nvs,      0x320000,  0x8000,
+spiffs,     data, spiffs,   0x328000,  0xD8000,

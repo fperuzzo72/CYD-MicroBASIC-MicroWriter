@@ -44,17 +44,40 @@ right.
 
 ## Confirmed on the real board
 
-Nothing yet. Milestone 1 (`editor/src/main.cpp`) exists to fill this section
-in. It compiles; it has not been flashed. Until a line moves up here, treat
-everything above as well-sourced but unverified.
+Flashed and run on 2026-08-31. Everything below is what the board itself
+reported or what was watched happening on its panel, not what a datasheet
+promised.
 
-| Item | Status |
-|---|---|
-| Panel draws, correct rotation and no clipped edge | PENDING |
-| Touch reads and calibrates | PENDING |
-| SD mounts and lists a directory | PENDING |
-| PSRAM genuinely absent | PENDING (the bring-up prints it either way) |
-| Real flash size is 4MB | PENDING |
+| Item | Status | Evidence |
+|---|---|---|
+| Chip is a classic ESP32 | **CONFIRMED** | esptool reads `ESP32-D0WD-V3 (revision v3.1)`; the firmware reports `rev 3, 2 core(s) @ 240 MHz` |
+| Flash is 4MB | **CONFIRMED** | `ESP.getFlashChipSize()` reports 4 MB |
+| No PSRAM | **CONFIRMED** | `ESP.getPsramSize()` returns 0. 335KB of heap free at boot, which is the real budget the port has to live inside |
+| Panel draws, correct rotation, no clipped edge | **CONFIRMED** | The geometry proof rendered with the border touching all four edges and TL/TR/BL/BR markers in their right corners, at rotation 1 (480x320) |
+| Touch reads and calibrates | **CONFIRMED** | Four-corner calibration completed, and the values reloaded from NVS across a power cycle on the next boot |
+| SD mounts and lists a directory | PENDING | No card on hand. `SD.begin()` fails as expected with an empty slot, which tests nothing either way |
+
+The one thing still open is the SD card, and it needs nothing but a FAT32 card
+in the slot.
+
+### Two toolchain facts this board taught us
+
+Neither is about the hardware, both cost a flash cycle, and both are the kind
+of thing that is invisible until it bites.
+
+- **The CH340 will not hold 921600 baud.** esptool connects, identifies the
+  chip, switches baud and then dies with `Unable to verify flash chip
+  connection (Serial data stream stopped)`. 460800 is reliable, and is what
+  `platformio.ini` now sets.
+- **A board that ran other firmware needs one full erase first.** This unit
+  came with NerdMiner on it, and the leftovers at 0x9000 made every boot log
+  `esp_core_dump_flash: size of core dump image: -4` with a line of garbage
+  characters. One `erase_region 0x9000 0x5000` cleared it for good. Simplest
+  general answer: `pio run -t erase` before the first upload.
+
+The partition layout also has two hard constraints imposed by the tooling
+rather than the chip. They are written up where they matter, in
+`editor/partitions.csv`.
 
 ## What this board does not have
 

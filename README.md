@@ -16,10 +16,12 @@ This is the third device in that line and by some distance the smallest.
 
 ## Status
 
-Milestone 1, hardware bring-up, is written and builds. **It has not been
-flashed to a board yet.** Nothing in `docs/HARDWARE.md`'s confirmation table
-has moved to CONFIRMED, and until it does, the pin table is well-sourced but
-unverified.
+Milestone 1, hardware bring-up, runs on the board. Panel, rotation, chip,
+flash size, the absence of PSRAM and the touch controller are all confirmed on
+real hardware, not inferred; the board reports 335KB of free heap at boot,
+which is the budget the rest of the port lives inside. The SD probe is the one
+item still unverified, for want of a card in the slot. Details and evidence in
+`docs/HARDWARE.md`.
 
 No MicroBASIC feature has been ported yet. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
@@ -63,6 +65,17 @@ pio device monitor -b 115200
 Run these from `editor/`. Unlike the PaperS3, which holds two firmwares at
 once in a shared dual-boot layout, this board has a single app partition:
 switching machines means reflashing.
+
+If the board has run other firmware before, erase it once first:
+
+```bash
+pio run -t erase
+```
+
+Leftovers from the previous image produce a `esp_core_dump_flash` error on
+every boot otherwise. Upload speed is set to 460800 rather than 921600 on
+purpose; the CH340 on this board does not hold the higher rate. Both are
+explained in `docs/HARDWARE.md`.
 
 The interpreter is not vendored. Fetch it before the first MicroBASIC build:
 

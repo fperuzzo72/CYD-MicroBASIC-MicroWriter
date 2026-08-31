@@ -47,14 +47,22 @@ enum class BrowserState {
 // .bas files their meaning is not in that build at all, so offering them
 // would be offering a dead end.
 //
-// MicroWriter's menu also carries SYNC and READER. MicroBASIC does not need
-// them there: it has a prompt, and typing SYNC or READER reaches the same
-// place. This machine has no prompt, so without menu entries those two would
-// be touch-only, and the whole point of the keyboard is not having to reach
-// for the screen. KBD is deliberately NOT among them -- asking for the
-// on-screen keyboard already means you are touching the screen.
+// MicroWriter's menu also carries SYNC. MicroBASIC does not need it there: it
+// has a prompt, and typing SYNC reaches the same place. This machine has no
+// prompt, so without a menu entry it would be touch-only, and the whole point
+// of the keyboard is not having to reach for the screen. KBD is deliberately
+// NOT among them: asking for the on-screen keyboard already means you are
+// touching the screen.
+//
+// The PaperS3 has a fourth entry here, "Switch to the reader", and it is gone
+// on this device. It switches firmware slots in that machine's shared dual-boot
+// layout with CrossPoint; this board has one app partition and no reader, so
+// the entry offered something that could never happen. Typing READER at
+// MicroBASIC's prompt still answers, saying it is PaperS3-only, which is the
+// right place for that answer: a command that explains itself when asked for,
+// rather than a menu line that advertises itself unasked.
 #if MICROWRITER
-constexpr int BROWSER_MENU_COUNT = 4;
+constexpr int BROWSER_MENU_COUNT = 3;
 #else
 constexpr int BROWSER_MENU_COUNT = 4;
 #endif

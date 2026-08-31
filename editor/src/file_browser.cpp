@@ -48,7 +48,6 @@ enum MenuEntry {
   MENU_NOTES = 0,
   MENU_NEW_NOTE,
   MENU_SYNC,
-  MENU_READER,
 };
 #else
 enum MenuEntry {
@@ -107,7 +106,6 @@ void chooseMenuEntry() {
     case MENU_NEW_NOTE: startNewFile(FileCollection::NOTES); return;
 #if MICROWRITER
     case MENU_SYNC: startWifiSyncFromCommand(); return;
-    case MENU_READER: startReaderSwitchFromCommand(); return;
 #else
     case MENU_PROGRAMS: openCollection(FileCollection::PROGRAMS); return;
     case MENU_NEW_PROGRAM: startNewFile(FileCollection::PROGRAMS); return;
@@ -160,7 +158,6 @@ const char* browserMenuLabel(int index) {
     case MENU_NEW_NOTE: return "New note";
 #if MICROWRITER
     case MENU_SYNC: return "Sync over WiFi";
-    case MENU_READER: return "Switch to the reader";
 #else
     case MENU_PROGRAMS: return "Programs";
     case MENU_NEW_PROGRAM: return "New program";

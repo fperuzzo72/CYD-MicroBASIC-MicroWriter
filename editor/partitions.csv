@@ -1,0 +1,33 @@
+# Freenove FNK0103N (ESP32-WROOM-32E, 4MB flash).
+#
+# Nothing carries over from the PaperS3 table: that was 16MB and a shared
+# dual-boot contract with CrossPoint. This board is this firmware's alone, and
+# the 4MB ceiling is the dominant fact of the whole port.
+#
+# One app partition, `factory`, of 3MB, and no OTA pair. The reasoning is
+# arithmetic: about 3.9MB is left after bootloader, table and NVS, so an OTA
+# pair would give ~1.9MB a slot. The PaperS3 binary sits at ~1.7MB with WiFi,
+# the web server, the NimBLE HID host, the interpreter and fonts, and there is
+# no margin for discovering mid-port that it does not fit. Revisit once this
+# build's real size is measured on the board: if it lands well under 1.8MB, an
+# OTA pair becomes worth it, because updating over WiFi beats the cable on a
+# board with an awkward boot button.
+#
+# NVS is 32K, not the 20K in Arduino's stock huge_app.csv. That lesson is
+# already paid for on the PaperS3: 20K will not hold BLE bonds, saved WiFi
+# credentials and the radio's own PHY calibration blob at the same time, and
+# the calibration write failing silently is what stopped WiFi associating at
+# all. See MicroWriter-BASIC-PaperS3's DEVELOPMENT_LOG, "WiFi never actually
+# connected".
+#
+# The spiffs partition is spare room, not a plan. Touch calibration and
+# preferences live in NVS (ten bytes do not need a filesystem), and user files
+# live on the SD card, the same as in both earlier projects. It is here
+# because a 4MB layout is painful to change later and leaving the space
+# unallocated buys nothing.
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x8000,
+factory,    app,  factory,  0x20000,   0x300000,
+spiffs,     data, spiffs,   0x320000,  0xD0000,
+coredump,   data, coredump, 0x3F0000,  0x10000,

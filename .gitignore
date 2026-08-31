@@ -1,0 +1,8 @@
+.pio/
+.cache/
+.DS_Store
+platformio.local.ini
+*.bin
+# Buscado em tempo de build por patches/tinybasic/fetch.sh, nunca versionado
+# aqui: o licenciamento upstream e ambiguo. Ver o cabecalho do fetch.sh.
+editor/lib/TinyBasic/

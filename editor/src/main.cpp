@@ -39,6 +39,7 @@ ported in milestone 7. Build -e fnk0103n. See docs/PORTING_PLAN.md."
 #include <EpdFontFamily.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
+#include <Utf8.h>
 #include <builtinFonts/unscii_10x20.h>
 #include <builtinFonts/unscii_12x24.h>
 #include <builtinFonts/unscii_15x30.h>
@@ -52,10 +53,13 @@ ported in milestone 7. Build -e fnk0103n. See docs/PORTING_PLAN.md."
 
 #include "board_fnk0103n.h"
 #include "config.h"
+#include "file_browser.h"
+#include "file_manager.h"
 #include "input_handler.h"
 #include "osk.h"
 #include "screen_editor.h"
 #include "sd_datetime.h"
+#include "text_editor.h"
 #include "tb_bridge.h"
 #include "tft_renderer.h"
 
@@ -136,6 +140,44 @@ static int codepointToUtf8(uint32_t cp, char* out) {
 // occasional visitor next to a BLE one, which is what milestone 9 needs.
 static void applyBand() {
   screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H);
+}
+
+// Owned by input_handler.cpp, which is where the PaperS3 keeps it too. Set by
+// file_browser.cpp whenever something it did needs repainting, and cleared here
+// after the repaint.
+extern bool screenDirty;
+
+// --- The prose side ---------------------------------------------------------
+//
+// The PaperS3 draws notes in NotoSans, a proportional font. Those headers are
+// about 2.6MB between the four weights and none is linked here, on a board with
+// 3.2MB of app partition that still has WiFi and BLE to fit.
+//
+// So MicroWriter writes in unscii, the same monospace cell the terminal uses:
+// already in the binary, costs nothing, and gives 60 characters a line at 8x16.
+// It also simplifies the wiring, because text_editor.cpp asks the caller for a
+// per-codepoint width and with a monospace font that is a constant.
+//
+// Reversible, not permanent. Embedding NotoSans 14 regular and bold would be
+// roughly 630KB of the 2.7MB still free, and the only code that would change is
+// editorGlyphWidth() below.
+static constexpr int FONT_PROSE = FONT_SCREEN_MONO_3;  // 8x16, 60 columns
+static constexpr int FONT_LIST = FONT_SCREEN_MONO_2;   // 10x20, easier to hit in a list
+static constexpr int PROSE_CELL_W = 8;
+static constexpr int PROSE_MARGIN = 4;
+
+static int editorGlyphWidth(uint32_t /*cp*/) { return PROSE_CELL_W; }
+
+static int advanceWidth(const char* str, const int nbytes) {
+  int w = 0;
+  const auto* p = reinterpret_cast<const unsigned char*>(str);
+  const unsigned char* end = p + nbytes;
+  while (p < end) {
+    const uint32_t cp = utf8NextCodepoint(&p);
+    if (cp == 0) break;
+    w += editorGlyphWidth(cp);
+  }
+  return w;
 }
 
 // The visible slice of the panel, and how many grid rows fit in it.
@@ -319,12 +361,149 @@ static void drawStatusBar() {
   drawBarButton(BTN_BLE, "BLE", "--", false);
 }
 
+// The prose editor: the wrapped lines text_editor.cpp computed, the selection
+// inverted, and a caret. Ported from the PaperS3's drawEditorUi with the font
+// swapped and the band taken from this panel's own geometry.
+static void drawEditorUi() {
+  const int lh = renderer.getLineHeight(FONT_PROSE);
+  const int bandH = viewBandH();
+  const int visible = bandH / lh;
+
+  editorSetMaxLineWidthPx(SCREEN_W - 2 * PROSE_MARGIN);
+  editorSetVisibleLines(visible);
+  editorSetPageJumpLines(visible > 1 ? visible - 1 : 1);
+  editorRecalculateLines();
+
+  const char* buf = editorGetBuffer();
+  const int lineCount = editorGetLineCount();
+  const int top = editorGetViewportStart();
+  const int cursorLine = editorGetCursorLine();
+
+  for (int row = 0; row < visible && top + row < lineCount; row++) {
+    const int i = top + row;
+    const int start = editorGetLinePosition(i);
+    const int end = (i + 1 < lineCount) ? editorGetLinePosition(i + 1) : static_cast<int>(editorGetLength());
+
+    char line[128];
+    int n = end - start;
+    if (n < 0) n = 0;
+    if (n > static_cast<int>(sizeof(line)) - 1) n = static_cast<int>(sizeof(line)) - 1;
+    memcpy(line, buf + start, n);
+    // Trim the newline the wrap kept, so it is not drawn as a glyph.
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+    line[n] = '\0';
+
+    const int y = STATUS_BAR_H + row * lh;
+    renderer.drawTextOpaque(FONT_PROSE, 0, y, SCREEN_W, lh, PROSE_MARGIN, y, line);
+
+    if (editorHasSelection()) {
+      const int selA = editorGetSelectionStart();
+      const int selB = editorGetSelectionEnd();
+      const int a = (selA > start) ? selA : start;  // clip to this line
+      const int b = (selB < start + n) ? selB : start + n;
+      if (b > a) {
+        const int preBytes = a - start;
+        const int selBytes = b - a;
+        const int x1 = PROSE_MARGIN + advanceWidth(line, preBytes);
+        const int w = advanceWidth(line + preBytes, selBytes);
+        char mid[128];
+        int mn = selBytes;
+        if (mn > static_cast<int>(sizeof(mid)) - 1) mn = static_cast<int>(sizeof(mid)) - 1;
+        memcpy(mid, line + preBytes, mn);
+        mid[mn] = '\0';
+        // One opaque push: the fill and the inverted text arrive together
+        // rather than as a black rectangle followed by white glyphs.
+        renderer.drawTextOpaque(FONT_PROSE, x1, y, w, lh, x1, y, mid, false);
+      }
+    }
+
+    if (i == cursorLine) {
+      int c = editorGetCursorCol();
+      if (c > n) c = n;
+      renderer.fillRect(PROSE_MARGIN + advanceWidth(line, c), y, 2, lh, true);
+    }
+  }
+}
+
+// Naming a new file, or retitling an open one. A new file has no name until
+// this is confirmed, which is why it comes before the editor rather than after.
+static void drawTitleUi() {
+  const int lh = renderer.getLineHeight(FONT_LIST);
+  renderer.drawText(FONT_LIST, 8, STATUS_BAR_H + 8, "Title:");
+
+  char shown[MAX_TITLE_LEN + 2];
+  snprintf(shown, sizeof(shown), "%s_", browserTitleBuffer());
+  renderer.drawText(FONT_LIST, 8, STATUS_BAR_H + 8 + lh + 8, shown);
+  renderer.drawText(FONT_PROSE, 8, STATUS_BAR_H + 8 + 2 * (lh + 8), "Enter to confirm, Esc to cancel");
+}
+
+static void drawCentered(const char* line1, const char* line2) {
+  const int lh = renderer.getLineHeight(FONT_LIST);
+  const int y = STATUS_BAR_H + viewBandH() / 2 - (line2 ? lh : lh / 2);
+  renderer.drawText(FONT_LIST, (SCREEN_W - renderer.getTextWidth(FONT_LIST, line1)) / 2, y, line1);
+  if (line2) {
+    renderer.drawText(FONT_LIST, (SCREEN_W - renderer.getTextWidth(FONT_LIST, line2)) / 2, y + lh, line2);
+  }
+}
+
+static void drawBrowserUi() {
+  if (getBrowserState() == BrowserState::EDIT) {
+    drawEditorUi();
+    return;
+  }
+  if (getBrowserState() == BrowserState::TITLE) {
+    drawTitleUi();
+    return;
+  }
+
+  const int rowH = renderer.getLineHeight(FONT_LIST) + 4;
+  const int rows = viewBandH() / rowH;
+  const bool menu = getBrowserState() == BrowserState::MENU;
+  const int count = menu ? BROWSER_MENU_COUNT : getFileCount();
+  const int sel = getBrowserSelection();
+
+  const char* status = browserStatusText();
+  if (count == 0) {
+    drawCentered(status[0] ? status : "Nothing here", "Esc to go back");
+    return;
+  }
+
+  // Minimal-scroll window: move only far enough to keep the selection in view.
+  static int scrollTop = 0;
+  if (sel < scrollTop) scrollTop = sel;
+  if (sel >= scrollTop + rows) scrollTop = sel - rows + 1;
+  if (scrollTop > count - rows) scrollTop = count > rows ? count - rows : 0;
+  if (scrollTop < 0) scrollTop = 0;
+
+  for (int row = 0; row < rows && scrollTop + row < count; row++) {
+    const int i = scrollTop + row;
+    const int y = STATUS_BAR_H + row * rowH;
+    const bool selected = (i == sel);
+    const char* label = menu ? browserMenuLabel(i) : getFileList()[i].title;
+    const int ty = y + (rowH - renderer.getLineHeight(FONT_LIST)) / 2;
+    renderer.drawTextOpaque(FONT_LIST, 0, y, SCREEN_W, rowH, 8, ty, label, !selected);
+  }
+
+  if (status[0]) {
+    const int y = STATUS_BAR_H + viewBandH() - renderer.getLineHeight(FONT_PROSE);
+    renderer.drawText(FONT_PROSE, 8, y, status);
+  }
+}
+
+// The paint chain. Its order and the key-routing chain in loop() must match:
+// the PaperS3 records that they disagreed once, and nothing noticed until
+// MicroWriter, where the browser is always open, so a screen drew but could
+// not be typed into because its keys were going to whatever was behind it.
 static void drawAll() {
   renderer.clearScreen();
   drawStatusBar();
-  drawTerminal();
+  if (isBrowserActive()) {
+    drawBrowserUi();
+  } else {
+    drawTerminal();
+  }
   if (g_oskVisible) oskDraw();
-  drawCursor(g_cursorOn);
+  if (!isBrowserActive()) drawCursor(g_cursorOn);
 }
 
 // Called by the runtime's byield() while a program is running, so a loop's
@@ -416,8 +595,11 @@ static void notBuiltYet(const char* what) {
 // to that, this is what gives way.
 void startWifiSyncFromCommand() { notBuiltYet("SYNC"); }
 
-// Milestone 7, the prose editor.
-void startEditorFromCommand() { notBuiltYet("EDITOR"); }
+// The prose editor, reached from the EDITOR button and from the MENU command.
+void startEditorFromCommand() {
+  browserStart();
+  screenDirty = true;
+}
 
 // Neither of these is coming. Both exist for the PaperS3's shared dual-boot
 // layout with CrossPoint: one switches firmware slots, the other browses that
@@ -464,7 +646,10 @@ static bool handleBarTap(const int x, const bool duringRun) {
     // commands do, so there is one place saying what is missing.
     case BTN_BLE:  if (!duringRun) screenEditorTermPrintLine("?BLE not built yet"); return !duringRun;
     case BTN_SYNC: if (!duringRun) startWifiSyncFromCommand(); return !duringRun;
-    case BTN_EDIT: if (!duringRun) startEditorFromCommand(); return !duringRun;
+    case BTN_EDIT:
+      if (duringRun) return false;
+      startEditorFromCommand();
+      return true;
   }
   return false;
 }
@@ -481,7 +666,7 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 5, interpreter ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 6, prose editor ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
@@ -526,6 +711,9 @@ void setup() {
                 sdDateTimeHasClock() ? "from network" : "seeded from build date");
 
   inputSetup();
+  editorInit();
+  editorSetGlyphWidthFn(editorGlyphWidth);
+  fileManagerSetup();
 
   // Quiet for the boot probe only: the interpreter looks for an autoexec.bas
   // with a plain open, so not finding one is the normal case rather than a
@@ -579,14 +767,40 @@ void loop() {
     // processed in this same pass, or nothing appears until the next touch.
   }
 
-  // Everything a keystroke does happens in here, including running a program.
-  // A RUN can sit inside this call for as long as the program takes.
-  if (processAllInput() > 0) {
+  browserLoop();  // no-op unless the editor is open; drives auto-save
+
+  // Key routing. This chain MUST stay in the same order as drawAll()'s, or
+  // keys reach a screen that is not the one on the panel. See the note there.
+  if (isBrowserActive()) {
+    uint8_t code, mods;
+    bool pressed;
+    while (dequeueKeyEventForCaller(code, mods, pressed)) {
+      if (pressed) browserHandleKey(code, mods);
+    }
+    if (screenDirty) {
+      screenDirty = false;
+      drawAll();
+      return;
+    }
+  } else if (processAllInput() > 0) {
+    // Everything a keystroke does happens in here, including running a
+    // program: a RUN sits inside this call for as long as it takes.
     drawTerminal();
     drawStatusBar();
     drawCursor(true);
     g_cursorOn = true;
     return;
+  }
+
+  if (screenDirty) {
+    screenDirty = false;
+    drawAll();
+    return;
+  }
+
+  if (isBrowserActive()) {
+    delay(10);
+    return;  // the browser draws its own caret; no terminal cursor to blink
   }
 
   static uint32_t lastBlink = 0;

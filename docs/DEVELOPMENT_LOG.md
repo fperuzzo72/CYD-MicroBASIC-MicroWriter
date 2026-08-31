@@ -753,3 +753,46 @@ resets to the same instant and every file ever saved carries an identical
 timestamp, which defeats the single thing a timestamp is for.
 
 Confirmed on the board: `clock: 2026-08-31 13:50 UTC (seeded from build date)`.
+
+## 2026-08-31 -- The prose side: text_editor, file_manager, file_browser
+
+All three ported. `text_editor.cpp` needed nothing at all: it depends only on
+`Utf8` and asks the caller for a per-codepoint glyph width, so the font is not
+its problem. `file_manager.cpp` needed the same SdFat-to-Arduino-SD
+substitution `tb_runtime.cpp` had, plus `rename`, plus one cast where
+`File::read` takes `uint8_t*` and SdFat's took `void*`. `file_browser.cpp`
+needed nothing: it is pure state, and drawing lives in `main.cpp`.
+
+The constants the prose side needs went back into `config.h` now rather than at
+the start, which is what the note at the top of that file said would happen:
+`FileInfo`, `MAX_FILES`, `TEXT_BUFFER_SIZE`, `MAX_LINES` and the auto-save
+intervals. RAM went from 48KB to 75KB, almost all of it the 16KB text buffer
+and the 1024-entry line table.
+
+**MicroWriter writes in a monospace font here, and that is a decision worth
+naming.** The PaperS3 draws notes in NotoSans; those headers are about 2.6MB
+across the four weights and none is linked in this build, on a board whose app
+partition is 3.2MB and still has WiFi and BLE to fit. unscii is already in the
+binary, costs nothing, gives 60 characters a line at 8x16, and makes the wiring
+simpler because a monospace glyph width is a constant. Reversible: NotoSans 14
+regular and bold would be roughly 630KB of the 2.7MB free, and the only code
+that changes is `editorGlyphWidth()`.
+
+**Two chains that must agree.** The PaperS3's `loop()` carries a warning worth
+repeating: the key-routing chain and the paint chain have to test the same
+conditions in the same order, and they disagreed there once. Nothing noticed
+until MicroWriter, where the browser is always open, and then a screen drew but
+could not be typed into because its keys were going to whatever was behind it.
+Both chains here are written next to each other with that comment attached.
+
+**Two process notes on my own working, because both cost time today.**
+
+A `str.replace` that finds nothing is silent. The prose block was anchored on a
+function I had deleted myself two changes earlier, so the edit did nothing and
+the failure surfaced as six "not declared in this scope" errors that looked
+like a missing include. Anchors are asserted now before replacing.
+
+And `screenDirty` was already defined in `input_handler.cpp`. I declared a
+second one in `main.cpp` from reading the PaperS3's `extern` and assuming it
+had no owner here. The linker caught it, which is the good case; the bad case
+would have been two variables with one name in different translation units.

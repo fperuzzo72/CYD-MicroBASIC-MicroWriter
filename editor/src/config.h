@@ -40,6 +40,37 @@ static constexpr int MAX_PROGRAM_LINE_LEN = 160;
 static constexpr int MAX_FILENAME_LEN = 64;
 static constexpr int MAX_TITLE_LEN = 40;
 
+// --- Prose side: the editor buffer and the file list ---------------------
+// Added with text_editor.cpp and file_manager.cpp rather than up front, which
+// is what the note at the top of this file said would happen.
+
+// One entry in a browsed folder. `title` is what the browser shows for a note,
+// MicroWriter's convention where the filename is an implementation detail; for
+// a program it is the filename itself, because LOAD "X" has to find the file,
+// so what is listed must be what LOAD takes.
+struct FileInfo {
+  char filename[MAX_FILENAME_LEN];
+  char title[MAX_TITLE_LEN];
+  unsigned long modTime;
+};
+
+static constexpr int MAX_FILES = 50;
+
+// A hard ceiling on how large a file the editor will open, not a function of
+// free memory: the buffer is allocated once and reused, so a note that fits
+// today keeps fitting. Unchanged from both earlier devices at 16KB, which is
+// 5% of this board's RAM and leaves the interpreter's own 16KB untouched.
+static constexpr size_t TEXT_BUFFER_SIZE = 16384;
+
+// Wrapped display lines the editor will track for one buffer.
+static constexpr int MAX_LINES = 1024;
+
+// Auto-save, carried over unchanged. Saving writes to the card and never
+// touches the panel, so neither of these causes a visible redraw. The editor
+// also saves on the way out.
+static constexpr unsigned long AUTO_SAVE_IDLE_MS = 10000;   // 10s after the last keystroke
+static constexpr unsigned long AUTO_SAVE_MAX_MS = 120000;   // and every 2min while still typing
+
 #define DBG_PRINTF(fmt, ...)  Serial.printf(fmt, ##__VA_ARGS__)
 #define DBG_PRINTLN(s)        Serial.println(s)
 #define DBG_PRINT(s)          Serial.print(s)

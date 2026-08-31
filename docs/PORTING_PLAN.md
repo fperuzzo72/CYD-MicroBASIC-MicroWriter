@@ -208,9 +208,14 @@ compiling.
    having a time to set, which follows the X4's principle of preferring
    something the device itself wrote over anything guessed now.
 
-   Still to do: `text_editor.cpp` first, then `file_manager.cpp`, then
-   `file_browser.cpp`, then the `microwriter` env becomes a real second machine
-   rather than a build that stops on an `#error`.
+   `text_editor.cpp`, `file_manager.cpp` and `file_browser.cpp` are **done** and
+   reachable from the EDITOR button and the MENU command. MicroWriter writes in
+   unscii rather than NotoSans: those headers are 2.6MB across four weights and
+   this build has WiFi and BLE still to fit. Reversible for about 630KB if
+   proportional type is wanted.
+
+   Still to do: the `microwriter` env itself, which needs `#if MICROWRITER`
+   guards in `main.cpp` so it stops at a machine rather than at an `#error`.
 8. **Network.** `wifi_sync.cpp` and `web_files_page.h`. Measure the binary
    here; this is where the flash budget gets tested.
 9. **BLE keyboard.** `BleKeyboardHost` and NimBLE. No longer conditional on

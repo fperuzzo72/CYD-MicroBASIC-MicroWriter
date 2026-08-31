@@ -823,3 +823,38 @@ keyboard's keys are painted by nothing else.
 Two screens still clear first and say so: the title prompt and the "nothing
 here" message draw three short lines and cannot cover the band by drawing it.
 Neither is a per-keystroke path.
+
+## 2026-08-31 -- MicroWriter builds and boots, and milestone 6 closes
+
+The `microwriter` env stopped at an `#error` for two milestones. It builds now,
+and more to the point it runs: flashed to the board, the browser opens at boot
+and lists the notes already on the card.
+
+The guards are `#if` rather than runtime checks for the reason platformio.ini
+gives: the excluded files are not compiled, so their symbols do not exist to be
+called. What is guarded is the terminal's row maths, its drawing, the
+interpreter's setup, and the key path that feeds it.
+
+Two smaller decisions came out of doing it.
+
+The bar drops SCR and EDITOR on MicroWriter. SCR is a terminal mode and there
+is no terminal; EDITOR would open what is already open. Rather than leave two
+dead buttons or restructure the table, a width of zero removes a button
+entirely: it is not drawn, not hit, and its space falls to the nameplate, which
+reads "MicroWriter CYD" there. The hit test had to learn to skip zero-width
+entries, which is the sort of thing that would have gone quietly wrong.
+
+`notify()` replaced the direct calls to `screenEditorTermPrintLine`. The four
+"not built yet" answers had been writing to a terminal that MicroWriter does
+not have; they now write wherever the machine in hand can show a line, which is
+the browser's status line there.
+
+| Build | Flash | RAM |
+|---|---|---|
+| MicroBASIC | 495029 of 3211264 (15.4%) | 75036 of 327680 |
+| MicroWriter | 441833 of 3211264 (13.8%) | 48792 of 327680 |
+
+Six milestones done, three to go: the network, the BLE keyboard, and whichever
+of those two the flash budget forces a choice between. On today's numbers there
+is 2.7MB of app partition unused, which is a much better position than the
+plan assumed when it was written.

@@ -214,8 +214,16 @@ compiling.
    this build has WiFi and BLE still to fit. Reversible for about 630KB if
    proportional type is wanted.
 
-   Still to do: the `microwriter` env itself, which needs `#if MICROWRITER`
-   guards in `main.cpp` so it stops at a machine rather than at an `#error`.
+   The `microwriter` env builds and boots. It excludes the interpreter, the
+   character-grid terminal and the command dispatch built on them, so the
+   browser opens at boot and never closes: there is nothing behind it to go back
+   to. Its bar drops SCR, which is a terminal mode, and EDITOR, which would open
+   what is already open, and the nameplate takes their space.
+
+   | Build | Flash | RAM |
+   |---|---|---|
+   | MicroBASIC | 495029 of 3211264 | 75036 of 327680 |
+   | MicroWriter | 441833 of 3211264 | 48792 of 327680 |
 8. **Network.** `wifi_sync.cpp` and `web_files_page.h`. Measure the binary
    here; this is where the flash budget gets tested.
 9. **BLE keyboard.** `BleKeyboardHost` and NimBLE. No longer conditional on

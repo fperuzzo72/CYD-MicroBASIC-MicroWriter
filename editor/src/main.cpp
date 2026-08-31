@@ -28,11 +28,16 @@
 // cursor lives at the bottom of the used area. Making the band shrink instead
 // is a one-line change in applyBand() if that ever becomes the common case.
 
-#if MICROWRITER
-#error "The microwriter env is not buildable yet: it excludes screen_editor and \
-the interpreter, and main.cpp has nothing else to draw until text_editor.cpp is \
-ported in milestone 7. Build -e fnk0103n. See docs/PORTING_PLAN.md."
-#endif
+// Two machines from this one file.
+//
+// MICROWRITER excludes the interpreter, the character-grid terminal, and the
+// command dispatch built on them (see platformio.ini). What is left is the
+// writing machine MicroBASIC grew out of: the browser is open from boot and
+// never closes, because there is nothing behind it to go back to.
+//
+// The guards below are all of the difference. They are #if rather than runtime
+// checks for the reason platformio.ini gives: the excluded files are not
+// compiled, so their symbols do not exist to be called.
 
 #include <Arduino.h>
 #include <EpdFont.h>
@@ -57,11 +62,14 @@ ported in milestone 7. Build -e fnk0103n. See docs/PORTING_PLAN.md."
 #include "file_manager.h"
 #include "input_handler.h"
 #include "osk.h"
-#include "screen_editor.h"
 #include "sd_datetime.h"
 #include "text_editor.h"
-#include "tb_bridge.h"
 #include "tft_renderer.h"
+
+#if !MICROWRITER
+#include "screen_editor.h"
+#include "tb_bridge.h"
+#endif
 
 static TFT_eSPI tft;
 static TftRenderer renderer(tft);
@@ -104,6 +112,7 @@ static int g_palette = 0;
 static bool g_oskVisible = true;
 static bool g_cursorOn = true;
 
+#if !MICROWRITER
 // Carried over from the PaperS3's main.cpp unchanged. Three-byte forms are not
 // reachable from this keyboard, but are handled rather than silently truncated
 // if that ever changes.
@@ -141,6 +150,7 @@ static int codepointToUtf8(uint32_t cp, char* out) {
 static void applyBand() {
   screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H);
 }
+#endif  // !MICROWRITER
 
 // Owned by input_handler.cpp, which is where the PaperS3 keeps it too. Set by
 // file_browser.cpp whenever something it did needs repainting, and cleared here
@@ -183,6 +193,7 @@ static int advanceWidth(const char* str, const int nbytes) {
 // The visible slice of the panel, and how many grid rows fit in it.
 static int viewBandH() { return SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0); }
 
+#if !MICROWRITER
 static int visibleRows() {
   int n = viewBandH() / screenEditorCellH();
   if (n < 1) n = 1;
@@ -268,6 +279,7 @@ static void drawTerminal() {
   const int below = STATUS_BAR_H + viewBandH() - (viewOriginY() + used);
   if (below > 0) renderer.fillRect(0, viewOriginY() + used, SCREEN_W, below, false);
 }
+#endif  // !MICROWRITER
 
 // --- Status bar -----------------------------------------------------------
 //
@@ -301,9 +313,18 @@ enum BarButtonId { BTN_SCR = 0, BTN_COLOR, BTN_EDIT, BTN_SYNC, BTN_KBD, BTN_BLE,
 // the nameplate.
 //
 // Order matches BarButtonId: SCR, COLOR, EDITOR, SYNC, KBD, BLE.
+//
+// A width of zero removes a button: it is neither drawn nor hit, and its space
+// falls to the nameplate. MicroWriter drops SCR, which is a terminal mode, and
+// EDITOR, which would open what is already open.
+#if MICROWRITER
+static constexpr int kBtnW[BTN_COUNT] = {0, 60, 0, 52, 52, 52};
+static constexpr int BTN_TOTAL_W = 0 + 60 + 0 + 52 + 52 + 52;  // 216
+#else
 static constexpr int kBtnW[BTN_COUNT] = {52, 60, 60, 52, 52, 52};
 static constexpr int BTN_TOTAL_W = 52 + 60 + 60 + 52 + 52 + 52;  // 328
-static constexpr int TITLE_W = SCREEN_W - BTN_TOTAL_W;           // 152
+#endif
+static constexpr int TITLE_W = SCREEN_W - BTN_TOTAL_W;
 
 static int btnX(const int index) {
   int x = TITLE_W;
@@ -339,6 +360,7 @@ static void drawBarCell(const int x, const int w, const char* label, const char*
 }
 
 static void drawBarButton(const int index, const char* label, const char* value, const bool active) {
+  if (kBtnW[index] == 0) return;  // not on this machine
   drawBarCell(btnX(index), kBtnW[index], label, value, active);
 }
 
@@ -348,10 +370,16 @@ static void drawStatusBar() {
   // The nameplate is drawn as a bar cell like the buttons, so the whole strip
   // is framed and reads as one thing. What the machine is on top, which board
   // it is underneath.
+#if MICROWRITER
+  drawBarCell(0, TITLE_W, "MicroWriter CYD", "FNK0103-N", false);
+#else
   drawBarCell(0, TITLE_W, "MicroBASIC CYD", "FNK0103-N", false);
+#endif
 
-  char scr[8];
+  char scr[8] = "-";
+#if !MICROWRITER
   snprintf(scr, sizeof(scr), "%d", screenEditorGetMode());
+#endif
 
   drawBarButton(BTN_SCR, "SCR", scr, false);
   drawBarButton(BTN_COLOR, "COLOR", kPalettes[g_palette].name, false);
@@ -519,11 +547,15 @@ static void drawBrowserUi() {
 // changed -- the keyboard folding, the palette, the SCREEN mode -- where the
 // keyboard and the gaps between its keys really do have to be repainted.
 static void drawBand() {
+#if MICROWRITER
+  drawBrowserUi();  // the only screen this machine has
+#else
   if (isBrowserActive()) {
     drawBrowserUi();
   } else {
     drawTerminal();
   }
+#endif
 }
 
 // The paint chain. Its order and the key-routing chain in loop() must match:
@@ -533,6 +565,10 @@ static void drawBand() {
 static void drawAll() {
   renderer.clearScreen();
   drawStatusBar();
+#if MICROWRITER
+  drawBrowserUi();
+  if (g_oskVisible) oskDraw();
+#else
   if (isBrowserActive()) {
     drawBrowserUi();
   } else {
@@ -540,6 +576,7 @@ static void drawAll() {
   }
   if (g_oskVisible) oskDraw();
   if (!isBrowserActive()) drawCursor(g_cursorOn);
+#endif
 }
 
 // Called by the runtime's byield() while a program is running, so a loop's
@@ -549,9 +586,11 @@ static void drawAll() {
 //
 // byield() throttles this by time rather than by print volume, which matters:
 // a full repaint is 143ms and doing one per PRINT would make a program crawl.
+#if !MICROWRITER
 void screenEditorFlushDisplay() {
   drawTerminal();
 }
+#endif
 
 // Defined below, next to the bar it acts on. Declared here because the hook
 // that serves a running program sits above it and needs to call it.
@@ -620,10 +659,22 @@ void pumpPhysicalButtonsForProgram() {
   }
 }
 
+// One place for "this does not exist yet", writing wherever the machine in hand
+// can actually show a line: the terminal on MicroBASIC, the browser's own
+// status line on MicroWriter.
+static void notify(const char* text) {
+#if MICROWRITER
+  browserSetStatus(text);
+  screenDirty = true;
+#else
+  screenEditorTermPrintLine(text);
+#endif
+}
+
 static void notBuiltYet(const char* what) {
   char msg[64];
   snprintf(msg, sizeof(msg), "?%s not built yet", what);
-  screenEditorTermPrintLine(msg);
+  notify(msg);
 }
 
 // Milestone 8. See docs/PORTING_PLAN.md, and the flash budget note there:
@@ -642,8 +693,8 @@ void startEditorFromCommand() {
 // reader's library. This board has a single app partition and no CrossPoint.
 // They stay reachable as commands only because terminal_input.cpp dispatches
 // them; the honest answer is that they have nowhere to go.
-void startReaderSwitchFromCommand() { screenEditorTermPrintLine("?READER is PaperS3 only"); }
-void startVcFromCommand() { screenEditorTermPrintLine("?VC is PaperS3 only"); }
+void startReaderSwitchFromCommand() { notify("?READER is PaperS3 only"); }
+void startVcFromCommand() { notify("?VC is PaperS3 only"); }
 
 // One bar handler, used both from loop() and from inside a running program.
 //
@@ -657,7 +708,7 @@ static bool handleBarTap(const int x, const bool duringRun) {
   // Walked rather than divided: the buttons are no longer one width.
   int index = -1;
   for (int i = 0; i < BTN_COUNT; i++) {
-    if (x >= btnX(i) && x < btnX(i) + kBtnW[i]) {
+    if (kBtnW[i] > 0 && x >= btnX(i) && x < btnX(i) + kBtnW[i]) {
       index = i;
       break;
     }
@@ -673,14 +724,16 @@ static bool handleBarTap(const int x, const bool duringRun) {
       g_palette = (g_palette + 1) % kPaletteCount;
       renderer.setPalette(kPalettes[g_palette].palette);
       return true;
+#if !MICROWRITER
     case BTN_SCR:
       if (duringRun) return false;
       screenEditorSetMode((screenEditorGetMode() + 1) % 4);
       applyBand();
       return true;
+#endif
     // Drawn before they work. They answer through the same functions the MENU
     // commands do, so there is one place saying what is missing.
-    case BTN_BLE:  if (!duringRun) screenEditorTermPrintLine("?BLE not built yet"); return !duringRun;
+    case BTN_BLE:  if (!duringRun) notify("?BLE not built yet"); return !duringRun;
     case BTN_SYNC: if (!duringRun) startWifiSyncFromCommand(); return !duringRun;
     case BTN_EDIT:
       if (duringRun) return false;
@@ -726,8 +779,10 @@ void setup() {
   renderer.insertFont(FONT_SCREEN_MONO_3, EpdFontFamily(&fontUnscii8x16));
   renderer.begin();
 
+#if !MICROWRITER
   applyBand();
   screenEditorReset();
+#endif
 
   // The card, before the interpreter: tbSetup() probes for an autoexec.bas and
   // fsbegin() creates the program directory, and both need a mounted card. Its
@@ -754,6 +809,11 @@ void setup() {
   // Quiet for the boot probe only: the interpreter looks for an autoexec.bas
   // with a plain open, so not finding one is the normal case rather than a
   // fault worth printing on a fresh screen.
+#if MICROWRITER
+  // The browser is this machine's whole interface, so it opens at boot and
+  // never closes. There is nothing behind it to go back to.
+  browserStart();
+#else
   tbRuntimeSetQuiet(true);
   tbSetup();
   tbRuntimeSetQuiet(false);
@@ -765,6 +825,7 @@ void setup() {
   screenEditorTermPrintLine(banner);
   screenEditorTermPrintLine("");
   screenEditorTermPrintLine("Ok");
+#endif
 
   oskInit(renderer, FONT_SCREEN_MONO_2, FONT_SCREEN_MONO_3, 0, SCREEN_H - OSK_H, SCREEN_W, OSK_H,
           onOskKey);
@@ -773,12 +834,17 @@ void setup() {
   drawAll();
   Serial.printf("first paint: %lu us\n", static_cast<unsigned long>(micros() - t0));
 
+#if !MICROWRITER
   const uint32_t t1 = micros();
   drawTerminalRow(0);
   Serial.printf("one terminal row: %lu us\n", static_cast<unsigned long>(micros() - t1));
   Serial.printf("terminal: %d cols x %d rows (keyboard %s) | heap %u KB\n", screenEditorCols(),
                 screenEditorRows(), g_oskVisible ? "up" : "down",
                 static_cast<unsigned>(ESP.getFreeHeap() / 1024));
+#else
+  Serial.printf("MicroWriter: browser open | heap %u KB\n",
+                static_cast<unsigned>(ESP.getFreeHeap() / 1024));
+#endif
 }
 
 void loop() {
@@ -819,7 +885,9 @@ void loop() {
       drawStatusBar();
       return;
     }
-  } else if (processAllInput() > 0) {
+  }
+#if !MICROWRITER
+  else if (processAllInput() > 0) {
     // Everything a keystroke does happens in here, including running a
     // program: a RUN sits inside this call for as long as it takes.
     drawTerminal();
@@ -828,6 +896,7 @@ void loop() {
     g_cursorOn = true;
     return;
   }
+#endif
 
   if (screenDirty) {
     screenDirty = false;
@@ -836,6 +905,7 @@ void loop() {
     return;
   }
 
+#if !MICROWRITER
   if (isBrowserActive()) {
     delay(10);
     return;  // the browser draws its own caret; no terminal cursor to blink
@@ -847,5 +917,6 @@ void loop() {
     g_cursorOn = !g_cursorOn;
     drawCursor(g_cursorOn);
   }
+#endif
   delay(10);
 }

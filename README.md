@@ -56,14 +56,18 @@ character grid, its scrolling and the logical-line tracking that makes editing a
 listed line in place work. Its row count and centring margin are derived from a
 band rather than stored as per-mode constants measured on another panel.
 
-Milestone 5, the interpreter, is **done**. It is a BASIC computer now: type a
+Milestone 5, the interpreter, is **done**. It is a BASIC computer: type a
 numbered line and it is program text, type anything else and it runs. The
 interpreter is Stefan Lenz's IoT BASIC, fetched at a pinned commit by
 `patches/tinybasic/fetch.sh` and never vendored here.
 
-The `microwriter` env does not build yet, on purpose and with one `#error`
-explaining why: what it excludes is exactly what `main.cpp` currently draws, and
-the prose editor that would replace it is milestone 7. The PaperS3 sources sit verbatim in
+Milestone 6, storage and the prose editor, is **done**, and both machines build
+and boot. MicroWriter opens its browser at boot and never closes it, since it
+has no terminal behind it. Notes are written in the same monospace unscii the
+terminal uses rather than the PaperS3's NotoSans, which is 2.6MB of headers this
+board's 3.2MB partition would rather spend on WiFi and BLE.
+
+Still to come: the network (milestone 8) and the BLE keyboard (milestone 9). The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
 

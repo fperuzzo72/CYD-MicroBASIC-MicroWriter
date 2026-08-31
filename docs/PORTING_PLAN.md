@@ -195,10 +195,22 @@ compiling.
    The `microwriter` env stops building at this milestone, on purpose and with
    one `#error` rather than a wall of linker failures: what it excludes is
    exactly what `main.cpp` draws, and its replacement is milestone 7.
-6. **Storage.** `file_manager.cpp`, `file_browser.cpp`, and `sd_datetime.cpp`
-   with the RTC path removed and only SNTP left.
-7. **Prose editor.** `text_editor.cpp`, and the `microwriter` env becomes a
-   real second machine rather than the same binary with a flag.
+6. **Storage and the prose editor**, which are one milestone and not two.
+   Splitting them was a guess made before reading the code: `file_manager.cpp`
+   and `file_browser.cpp` both include `text_editor.h`, and the browser calls
+   about twenty of its functions, because it is what dispatches editing keys to
+   the editor. There is no order in which one lands without the other.
+
+   `sd_datetime.cpp` was the one genuinely separable piece and is **done**,
+   rewritten rather than ported: this board has no RTC and no SdFat, and
+   ESP-IDF's FATFS is built with `FF_FS_NORTC = 0`, so timestamps already come
+   from the system clock and there is no callback to register. What is left is
+   having a time to set, which follows the X4's principle of preferring
+   something the device itself wrote over anything guessed now.
+
+   Still to do: `text_editor.cpp` first, then `file_manager.cpp`, then
+   `file_browser.cpp`, then the `microwriter` env becomes a real second machine
+   rather than a build that stops on an `#error`.
 8. **Network.** `wifi_sync.cpp` and `web_files_page.h`. Measure the binary
    here; this is where the flash budget gets tested.
 9. **BLE keyboard.** `BleKeyboardHost` and NimBLE. No longer conditional on

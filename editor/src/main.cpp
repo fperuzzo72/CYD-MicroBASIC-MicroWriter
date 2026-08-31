@@ -55,6 +55,7 @@ ported in milestone 7. Build -e fnk0103n. See docs/PORTING_PLAN.md."
 #include "input_handler.h"
 #include "osk.h"
 #include "screen_editor.h"
+#include "sd_datetime.h"
 #include "tb_bridge.h"
 #include "tft_renderer.h"
 
@@ -514,6 +515,15 @@ void setup() {
   sdSpi.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
   const bool sdOk = SD.begin(PIN_SD_CS, sdSpi, 20000000);
   Serial.printf("SD: %s\n", sdOk ? "mounted" : "NOT mounted");
+
+  // Before anything writes to the card. An unset ESP32 clock starts at the
+  // epoch, and FAT cannot represent 1970, so every file this machine saved
+  // would be dated 1980-01-01 and a card full of them would not sort.
+  sdDateTimeSetup();
+  char stamp[20];
+  sdDateTimeFormat(stamp, sizeof(stamp));
+  Serial.printf("clock: %s UTC (%s)\n", stamp,
+                sdDateTimeHasClock() ? "from network" : "seeded from build date");
 
   inputSetup();
 

@@ -718,3 +718,38 @@ PaperS3's bar does the same with the space its own buttons leave.
 60px still clears every label: "EDITOR" is the longest at 48px in the 8x16
 cell, and the palette names are 40px. Nothing had to be abbreviated to make
 room.
+
+## 2026-08-31 -- Milestones 6 and 7 are one milestone, and sd_datetime is a rewrite
+
+**The plan had storage and the prose editor as separate milestones, and the
+code says otherwise.** `file_manager.cpp` and `file_browser.cpp` both include
+`text_editor.h`; the browser calls about twenty of its functions, because it is
+what dispatches editing keys into the editor. There is no order in which one
+lands without the other. The split was a guess written before reading them, and
+it is now one milestone.
+
+**`sd_datetime` was the separable piece, and porting it would have been the
+wrong verb.** The PaperS3 version registers an SdFat callback
+(`FsDateTime::setCallback`) and fills it from a BM8563 RTC. This board has
+neither, and its SD library is not SdFat: Arduino's goes through ESP-IDF's
+FATFS, which is configured `FF_FS_NORTC = 0`, so timestamps are already enabled
+and taken from `get_fattime()`, which reads the system clock. There is no
+callback to register. Set the clock and files are dated.
+
+Which leaves the part that was always the hard bit: having a time to set it to.
+
+The X4 answers that, and the answer travels even though its mechanism does not.
+MicroBASIC there has no clock either, and reads the last valid timestamp the
+CrossPoint reader left in `/.crosspoint/state.json` on the same card. No reader
+here and no such file, but the principle is the thing: prefer something the
+device itself wrote while it knew, over anything guessed now. What this device
+wrote is its own saved programs, so the clock is seeded from the newest file
+under `/MicroBASIC/programs`, or the firmware build date, whichever is later.
+
+That matters more here than on either earlier machine. WiFi is milestone 8 and
+is the piece that gives way if flash runs short, so the build date may be the
+only real time this machine ever receives. Without the card seed, every boot
+resets to the same instant and every file ever saved carries an identical
+timestamp, which defeats the single thing a timestamp is for.
+
+Confirmed on the board: `clock: 2026-08-31 13:50 UTC (seeded from build date)`.

@@ -379,8 +379,18 @@ static void drawEditorUi() {
   const int top = editorGetViewportStart();
   const int cursorLine = editorGetCursorLine();
 
-  for (int row = 0; row < visible && top + row < lineCount; row++) {
+  // Every row of the band, not only the rows that have text. A row past the end
+  // still gets an opaque empty draw, which is what removes the need to clear the
+  // band first. Clearing and then drawing is two passes over the same pixels,
+  // and the first one is what reads as the whole screen flashing on every
+  // keystroke.
+  for (int row = 0; row < visible; row++) {
     const int i = top + row;
+    const int y0 = STATUS_BAR_H + row * lh;
+    if (i >= lineCount) {
+      renderer.drawTextOpaque(FONT_PROSE, 0, y0, SCREEN_W, lh, PROSE_MARGIN, y0, "");
+      continue;
+    }
     const int start = editorGetLinePosition(i);
     const int end = (i + 1 < lineCount) ? editorGetLinePosition(i + 1) : static_cast<int>(editorGetLength());
 
@@ -428,6 +438,10 @@ static void drawEditorUi() {
 // Naming a new file, or retitling an open one. A new file has no name until
 // this is confirmed, which is why it comes before the editor rather than after.
 static void drawTitleUi() {
+  // Only three lines, so unlike the editor and the list this one cannot cover
+  // the band by drawing it. It is also not a per-keystroke path -- the title
+  // screen repaints while a name is being typed, but it is three short rows.
+  renderer.fillRect(0, STATUS_BAR_H, SCREEN_W, viewBandH(), false);
   const int lh = renderer.getLineHeight(FONT_LIST);
   renderer.drawText(FONT_LIST, 8, STATUS_BAR_H + 8, "Title:");
 
@@ -438,6 +452,7 @@ static void drawTitleUi() {
 }
 
 static void drawCentered(const char* line1, const char* line2) {
+  renderer.fillRect(0, STATUS_BAR_H, SCREEN_W, viewBandH(), false);
   const int lh = renderer.getLineHeight(FONT_LIST);
   const int y = STATUS_BAR_H + viewBandH() / 2 - (line2 ? lh : lh / 2);
   renderer.drawText(FONT_LIST, (SCREEN_W - renderer.getTextWidth(FONT_LIST, line1)) / 2, y, line1);
@@ -475,18 +490,39 @@ static void drawBrowserUi() {
   if (scrollTop > count - rows) scrollTop = count > rows ? count - rows : 0;
   if (scrollTop < 0) scrollTop = 0;
 
-  for (int row = 0; row < rows && scrollTop + row < count; row++) {
+  for (int row = 0; row < rows; row++) {
     const int i = scrollTop + row;
     const int y = STATUS_BAR_H + row * rowH;
-    const bool selected = (i == sel);
-    const char* label = menu ? browserMenuLabel(i) : getFileList()[i].title;
+    const bool selected = (i == sel) && i < count;
+    const char* label = (i >= count) ? "" : (menu ? browserMenuLabel(i) : getFileList()[i].title);
     const int ty = y + (rowH - renderer.getLineHeight(FONT_LIST)) / 2;
     renderer.drawTextOpaque(FONT_LIST, 0, y, SCREEN_W, rowH, 8, ty, label, !selected);
+  }
+  // The rows do not always divide the band exactly; whatever is left below the
+  // last one would otherwise keep the previous screen.
+  const int usedH = rows * rowH;
+  if (viewBandH() > usedH) {
+    renderer.fillRect(0, STATUS_BAR_H + usedH, SCREEN_W, viewBandH() - usedH, false);
   }
 
   if (status[0]) {
     const int y = STATUS_BAR_H + viewBandH() - renderer.getLineHeight(FONT_PROSE);
     renderer.drawText(FONT_PROSE, 8, y, status);
+  }
+}
+
+// Repaints the band and nothing else: no clear, no status bar, no keyboard.
+// Every path it reaches covers the band opaquely, so the panel goes straight
+// from the old content to the new one with nothing blanked in between.
+//
+// This is what a keystroke uses. drawAll() below is for when the LAYOUT
+// changed -- the keyboard folding, the palette, the SCREEN mode -- where the
+// keyboard and the gaps between its keys really do have to be repainted.
+static void drawBand() {
+  if (isBrowserActive()) {
+    drawBrowserUi();
+  } else {
+    drawTerminal();
   }
 }
 
@@ -779,7 +815,8 @@ void loop() {
     }
     if (screenDirty) {
       screenDirty = false;
-      drawAll();
+      drawBand();
+      drawStatusBar();
       return;
     }
   } else if (processAllInput() > 0) {
@@ -794,7 +831,8 @@ void loop() {
 
   if (screenDirty) {
     screenDirty = false;
-    drawAll();
+    drawBand();
+    drawStatusBar();
     return;
   }
 

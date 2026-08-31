@@ -796,3 +796,30 @@ And `screenDirty` was already defined in `input_handler.cpp`. I declared a
 second one in `main.cpp` from reading the PaperS3's `extern` and assuming it
 had no owner here. The linker caught it, which is the good case; the bad case
 would have been two variables with one name in different translation units.
+
+## 2026-08-31 -- The whole screen flashed on every keystroke in the editor
+
+Typing in the prose editor blanked and repainted the entire panel per
+character.
+
+The terminal never did this, and the difference says why. A keystroke there
+redraws one row with `drawTextOpaque`, which composes background and glyphs
+together and pushes them in a single transfer. A keystroke in the browser went
+through `drawAll()`, which starts with `clearScreen()` and then paints
+everything back. Two passes over the same pixels, and the first one is what the
+eye sees as a flash.
+
+This is milestone 2's lesson arriving somewhere it had not been applied. The
+fix is not to redraw less, it is to redraw once: every path that owns the band
+now covers all of it, including the rows past the end of the text and the rows
+past the end of a list, which get an opaque empty draw rather than being left
+to a prior clear. With the band fully covered there is nothing to clear.
+
+`drawBand()` is what a keystroke calls now. `drawAll()`, with its clear, is
+kept for when the layout itself changed: the keyboard folding away, the palette,
+the SCREEN mode. Those genuinely need it, because the gaps between the
+keyboard's keys are painted by nothing else.
+
+Two screens still clear first and say so: the title prompt and the "nothing
+here" message draw three short lines and cannot cover the band by drawing it.
+Neither is a per-keystroke path.

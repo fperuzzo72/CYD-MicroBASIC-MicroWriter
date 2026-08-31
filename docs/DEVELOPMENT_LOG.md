@@ -906,3 +906,36 @@ was right there and wrong here.
 
 Auto-pairing, the passkey display and the BLE button's live state are ported.
 `BLE: up` on the board. Untested against a real keyboard.
+
+## 2026-08-31 -- Milestone 9 closes, and the function that caused three bugs gets a warning
+
+The BLE keyboard pairs and works. Loading and editing a program from it works,
+and so does creating a new one, which was milestone 6's last unverified path.
+
+Two failures came first and shared a cause. `pumpPhysicalButtonsForProgram()`
+opened with `if (!g_oskVisible) return;`, written when the on-screen keyboard
+was the only thing it served. Folding that keyboard away to use a BLE one made
+the whole function give up before reading anything, and since it is the only
+path input has into a running program, neither the bar nor the panel answered
+during a RUN. It had also never polled BLE, because BLE did not exist in this
+project when it was written, so Esc from a real keyboard could not stop a
+program either.
+
+**That is the third bug in this one function, all the same shape.** It was an
+empty stub, so nothing could stop a program at all. It drew nothing, so an
+armed Ctrl was invisible and Ctrl+C took three tries. It returned early on a
+hidden keyboard, so a BLE keyboard silently disabled the bar. Every time, the
+machine gained an input and this function was not told.
+
+The name is why. It says "physical buttons", which is the X4's d-pad, and it is
+kept that way so these files still diff cleanly against the two machines they
+are shared with. A rename would fix the reading and cost that, which on a
+codebase where fixes are carried by hand between three devices is the worse
+trade.
+
+So the warning goes in the code instead, at both ends: a block at the top of
+the function saying what it really is, listing every input that must be served
+from it, naming the three bugs, and stating plainly that an early return here
+disables more than whatever prompted it; and a note at the call site in
+`byield()`, where a reader sees a function named for buttons on a board that
+has none and would otherwise reasonably assume it is dead.

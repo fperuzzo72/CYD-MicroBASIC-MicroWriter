@@ -248,7 +248,8 @@ compiling.
    is a classic ESP32 with a 4.2 radio.
 
    Auto-pairing, the passkey display and the BLE button's live state are all
-   ported. Still unverified against a real keyboard.
+   ported. **Verified on the board**: a keyboard pairs, types, and loads, edits
+   and creates programs.
 
    (Original note, kept because the reasoning stands.) No longer conditional on
    milestone 8 leaving room: the plan for this device is a physical keyboard

@@ -385,9 +385,14 @@ void byield() {
   if (++sinceYield >= YIELD_EVERY) {
     sinceYield = 0;
     vTaskDelay(1);
-    // The d-pad only reaches a running program through here: loop() is
-    // blocked inside the interpreter for the whole run. Same cadence as the
-    // scheduler yield, which is far faster than a finger.
+    // Not just the d-pad it is named after, and on this device not a d-pad at
+    // all. This is the ONLY path input has into a running program: loop() is
+    // blocked inside the interpreter for the whole run, so the BLE keyboard,
+    // the status bar and the on-screen keys are all read from in here or not
+    // read at all. Esc and Ctrl+C arrive this way, which is to say that
+    // stopping a program depends on this call. See its definition in main.cpp
+    // before changing the cadence. Same rate as the scheduler yield, which is
+    // far faster than a finger.
     pumpPhysicalButtonsForProgram();
   }
 

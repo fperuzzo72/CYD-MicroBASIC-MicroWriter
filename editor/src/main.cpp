@@ -674,24 +674,59 @@ static bool handleBarTap(int x, bool duringRun);
 // where the X4 has a d-pad and the PaperS3 has a power key. Nothing to rearm.
 void physicalButtonsRearm() {}
 
-// Called by the runtime's byield() every sixteen statements while a program
-// runs. Named for the d-pad it pumps on the X4, but its real job is the one
-// thing loop() cannot do during a RUN: get input to a running program.
-//
-// loop() is blocked inside the interpreter for the entire run, so nothing else
-// polls the panel. Without this, Esc never reaches the queue, BREAK never
-// fires, and an endless program is endless: the machine still draws, still
-// prints, and cannot be stopped. Which is exactly what a `20 GOTO 10` did
-// before this existed, because it was stubbed out as a no-op on the reasoning
-// that a board with no buttons has no buttons to pump. True about buttons,
-// wrong about the hook.
-//
-// Throttled by time rather than run on every call: byield() reaches here
-// hundreds of times a second and a touch read is an SPI transaction. 25ms is
-// far faster than a finger and costs the program almost nothing. The same
-// interval also debounces, which a resistive panel needs.
 void pumpPhysicalButtonsForProgram() {
-  if (!g_oskVisible) return;
+  // ==========================================================================
+  // READ THIS BEFORE CHANGING ANYTHING HERE, INCLUDING ADDING AN EARLY RETURN.
+  //
+  // The name is wrong for this device and is kept anyway. It says "physical
+  // buttons" because on the X4 that is the d-pad it reads, and it is kept so
+  // this file still diffs cleanly against the two machines it shares code
+  // with. What it actually is:
+  //
+  //     THE ONLY PATH INPUT HAS INTO A RUNNING PROGRAM.
+  //
+  // The interpreter's byield() calls it every sixteen statements. During a RUN,
+  // loop() is blocked inside the interpreter for the entire duration, so
+  // nothing else polls anything: not the keyboard, not the panel, not the bar.
+  // Whatever is not read here is not read at all until the program ends, and a
+  // program that does not end is a machine that cannot be stopped.
+  //
+  // Every input this device has must be served from here, and the list has
+  // grown twice since it was written:
+  //
+  //   BLE keyboard    Esc and Ctrl+C, the way a program is stopped by someone
+  //                   with a real keyboard. Added last and missing at first,
+  //                   which is why Esc did nothing on a paired keyboard.
+  //   Status bar      KBD, COLOR. The rest are refused while running, on
+  //                   purpose: see handleBarTap.
+  //   On-screen keys  Esc and Ctrl+C again, for when there is no keyboard.
+  //
+  // This function has been the cause of three separate bugs, all the same
+  // shape: something the machine gained was not added here, and the symptom
+  // appeared somewhere else entirely. It was an empty stub, so no program could
+  // be stopped at all. It drew nothing, so an armed Ctrl was invisible and
+  // Ctrl+C took three attempts. It returned early when the on-screen keyboard
+  // was hidden, so folding it away for a BLE keyboard silently disabled the bar
+  // and the panel here too.
+  //
+  // So: if this device grows another way to reach it, this is where that
+  // belongs. And an early return at the top of this function will disable more
+  // than whatever you were thinking about when you wrote it.
+  // ==========================================================================
+
+  // BLE first, and unconditionally: a keyboard is the one input that does not
+  // go through the panel at all, so it must not sit behind the panel's
+  // throttle.
+  BleHid.poll();
+  freeink::KeyEvent bleEv;
+  while (BleHid.popKey(bleEv)) {
+    enqueueKeyEvent(bleEv.keycode, bleEv.mods, bleEv.pressed);
+  }
+
+  // Then the panel, throttled by time rather than run on every call: byield()
+  // reaches here hundreds of times a second and a touch read is an SPI
+  // transaction. 25ms is far faster than a finger and costs the program almost
+  // nothing.
   static uint32_t lastPoll = 0;
   const uint32_t now = millis();
   if (now - lastPoll < 25) return;
@@ -701,22 +736,27 @@ void pumpPhysicalButtonsForProgram() {
   if (!tft.getTouch(&x, &y)) return;
 
   static uint32_t lastTap = 0;
-  if (now - lastTap < 220) return;
+  if (now - lastTap < 220) return;  // the same interval debounces the resistive panel
   lastTap = now;
 
+  // The bar answers whether or not the on-screen keyboard is up. This used to
+  // sit behind an early return on g_oskVisible, which was true when this hook
+  // served nothing but the keyboard and wrong the moment there was another way
+  // in: with the keyboard folded away for a BLE one, the whole function gave up
+  // before reading anything, so a running program could not be reached from the
+  // bar either.
   if (y < STATUS_BAR_H) {
-    if (handleBarTap(x, /*duringRun=*/true)) {
-      drawAll();
-    }
+    if (handleBarTap(x, /*duringRun=*/true)) drawAll();
     return;
   }
 
-  // Arming a modifier has to be visible here too, and this is where it was
-  // not. Ctrl+C is how a program is stopped from the keyboard, and tapping
-  // Ctrl armed it correctly while drawing nothing: no inverted key, no way to
-  // tell it had registered. So it gets tapped again, which disarms it, and the
-  // C that follows is an ordinary letter. Two taps out of three do nothing and
-  // the third works, which is exactly how it behaved.
+  if (!g_oskVisible) return;  // below the bar there is nothing to tap
+
+  // Arming a modifier has to be visible here too. Ctrl+C is how a program is
+  // stopped from the panel, and tapping Ctrl armed it correctly while drawing
+  // nothing: no inverted key, no way to tell it had registered. So it gets
+  // tapped again, which disarms it, and the C that follows is an ordinary
+  // letter.
   const bool shiftWas = oskShiftArmed();
   const bool ctrlWas = oskCtrlArmed();
   const bool capsWas = oskCapsLockOn();

@@ -172,7 +172,17 @@ static void forceBlePairingNow() {
 }
 
 static int g_palette = 0;
-static bool g_oskVisible = true;
+// Folded away at boot, and the reasoning is that the cost is asymmetric.
+// Someone who is going to use the on-screen keyboard already has a hand on the
+// panel, so the one tap on KBD costs them nothing. Someone with a BLE keyboard
+// who booted into a keyboard they did not want would have to reach for the
+// screen to get rid of it, which is the thing a real keyboard exists to avoid,
+// and until they did they would be working in 6 rows instead of 18.
+//
+// The PaperS3 decides this at runtime instead, showing the keyboard whenever no
+// BLE keyboard is connected. That does not carry: at boot nothing is connected
+// yet, because pairing takes a few seconds, so it would appear and then vanish.
+static bool g_oskVisible = false;
 static bool g_cursorOn = true;
 
 #if !MICROWRITER

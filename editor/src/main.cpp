@@ -251,18 +251,31 @@ static void drawTerminal() {
 // everything else keeps the position a hand already knows.
 enum BarButtonId { BTN_SCR = 0, BTN_COLOR, BTN_EDIT, BTN_SYNC, BTN_KBD, BTN_BLE, BTN_COUNT };
 
-// 60 rather than 80, which buys 120px on the left for the machine's name. The
-// PaperS3's bar does the same thing with the space its buttons leave. 60 still
-// clears every label: "EDITOR" is the longest at 48px in the 8x16 cell, and
-// "green", "amber" and "paper" are 40.
-static constexpr int BTN_W = 60;
-static constexpr int BTN_X0 = SCREEN_W - BTN_COUNT * BTN_W;  // 120
+// Per-button widths rather than one number, because the labels are not one
+// length. COLOR and EDITOR need 60: "EDITOR" is 48px in the 8x16 cell and
+// "green", "amber" and "paper" are 40. The other four hold nothing longer than
+// "SYNC" at 32px, so 52 is generous for them and the 32px it releases goes to
+// the nameplate.
+//
+// Order matches BarButtonId: SCR, COLOR, EDITOR, SYNC, KBD, BLE.
+static constexpr int kBtnW[BTN_COUNT] = {52, 60, 60, 52, 52, 52};
+static constexpr int BTN_TOTAL_W = 52 + 60 + 60 + 52 + 52 + 52;  // 328
+static constexpr int TITLE_W = SCREEN_W - BTN_TOTAL_W;           // 152
 
-static void drawBarButton(const int index, const char* label, const char* value, const bool active) {
-  const int x = BTN_X0 + index * BTN_W;
+static int btnX(const int index) {
+  int x = TITLE_W;
+  for (int i = 0; i < index; i++) x += kBtnW[i];
+  return x;
+}
+
+// A bar cell: filled, framed, with a label over a value. The nameplate is one
+// of these too, which is what makes the bar read as a bar rather than as five
+// boxes and some floating text.
+static void drawBarCell(const int x, const int w, const char* label, const char* value,
+                        const bool active) {
   const int inset = 1;
-  renderer.fillRect(x, 0, BTN_W, STATUS_BAR_H, active);
-  renderer.drawRect(x + inset, inset, BTN_W - 2 * inset, STATUS_BAR_H - 2 * inset, !active);
+  renderer.fillRect(x, 0, w, STATUS_BAR_H, active);
+  renderer.drawRect(x + inset, inset, w - 2 * inset, STATUS_BAR_H - 2 * inset, !active);
 
   // Label above, value below, both in the 8x16 cell so two lines fit the bar.
   // Drawn in the opposite state to the fill so an active button reads as
@@ -275,21 +288,24 @@ static void drawBarButton(const int index, const char* label, const char* value,
   // at row 30. At 14 the ink spans rows 16 to 29 and lands exactly inside the
   // usable area, while capitals only reach row 12, leaving the label clear.
   const int lw = renderer.getTextWidth(FONT_SCREEN_MONO_3, label);
-  renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - lw) / 2, 0, label, !active);
+  renderer.drawText(FONT_SCREEN_MONO_3, x + (w - lw) / 2, 0, label, !active);
   if (value && *value) {
     const int vw = renderer.getTextWidth(FONT_SCREEN_MONO_3, value);
-    renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - vw) / 2, 14, value, !active);
+    renderer.drawText(FONT_SCREEN_MONO_3, x + (w - vw) / 2, 14, value, !active);
   }
+}
+
+static void drawBarButton(const int index, const char* label, const char* value, const bool active) {
+  drawBarCell(btnX(index), kBtnW[index], label, value, active);
 }
 
 static void drawStatusBar() {
   renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
 
-  // What the machine is, on the two lines the bar already has. Spelled the way
-  // Freenove's own product code reads apart from the hyphen, which is how it is
-  // written on the box.
-  renderer.drawText(FONT_SCREEN_MONO_3, 4, 0, "MicroBASIC");
-  renderer.drawText(FONT_SCREEN_MONO_3, 4, 14, "CYD FNK0103-N");
+  // The nameplate is drawn as a bar cell like the buttons, so the whole strip
+  // is framed and reads as one thing. What the machine is on top, which board
+  // it is underneath.
+  drawBarCell(0, TITLE_W, "MicroBASIC CYD", "FNK0103-N", false);
 
   char scr[8];
   snprintf(scr, sizeof(scr), "%d", screenEditorGetMode());
@@ -418,8 +434,16 @@ void startVcFromCommand() { screenEditorTermPrintLine("?VC is PaperS3 only"); }
 // built yet" line with the program's own output. Neither is a thing a bar tap
 // should be able to do mid-run.
 static bool handleBarTap(const int x, const bool duringRun) {
-  if (x < BTN_X0) return false;  // the machine's name, not a button
-  switch ((x - BTN_X0) / BTN_W) {
+  if (x < TITLE_W) return false;  // the nameplate, not a button
+  // Walked rather than divided: the buttons are no longer one width.
+  int index = -1;
+  for (int i = 0; i < BTN_COUNT; i++) {
+    if (x >= btnX(i) && x < btnX(i) + kBtnW[i]) {
+      index = i;
+      break;
+    }
+  }
+  switch (index) {
     case BTN_KBD:
       // Only the window changes. The grid keeps all its rows either way, so
       // folding the keyboard away brings back the rows it was hiding rather

@@ -22,6 +22,17 @@ real hardware rather than inferred, and the board reports 335KB of free heap at
 boot, which is the budget the rest of the port lives inside. Evidence for every
 row is in `docs/HARDWARE.md`.
 
+Milestone 2, the render layer, is **done**. `TftRenderer` offers the fifteen
+`GfxRenderer` methods the ported code actually calls, with matching signatures,
+and draws EpdFont glyphs straight to the panel with no framebuffer in between.
+A full character-grid repaint costs 65ms and a single cell 240us, both measured
+on the board; how that got from an initial 196ms is in
+`docs/PORTING_PLAN.md`, "The render budget".
+
+Because the panel is backlit and colour, it is no longer black on white by
+physics. Three palettes ship: phosphor green (the default), phosphor amber, and
+paper white, which is what the two e-paper devices look like.
+
 No MicroBASIC feature has been ported yet. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.

@@ -40,8 +40,8 @@ bar draws in the base font) leaving a 304-pixel terminal band:
 
 | Mode | Columns x Rows | Cell | Scale from unscii-16 | Font |
 |---|---|---|---|---|
-| `SCREEN 0` | 32 x 10 | 15x30 | 1.875x | `unscii_15x30.h`, already generated |
-| `SCREEN 1` | 40 x 12 | 12x24 | 1.5x | `unscii_12x24.h`, already generated |
+| `SCREEN 0` | 32 x 10 | 15x30 | 1.875x | `unscii_15x30.h`, **drawn on the panel** |
+| `SCREEN 1` | 40 x 12 | 12x24 | 1.5x | `unscii_12x24.h`, **drawn on the panel** |
 | `SCREEN 2` | 48 x 15 | 10x20 | 1.25x | needs generating |
 | `SCREEN 3` | 60 x 19 | 8x16 | 1.0x, native | unscii-16 unresampled |
 
@@ -57,8 +57,42 @@ PaperS3 at 64, each picked for what read well on that panel; 40 is the
 equivalent judgement for this one, and it is also the column count most of the
 home computers this thing is imitating actually had.
 
-This table is a proposal, not a decision. It is the first thing to revisit
-once the bring-up has been on the real panel and the glyphs can be looked at.
+The two generated modes have now been drawn on the real panel and measured:
+both come out to exactly 480 pixels across their full column count, so the
+column arithmetic in this table holds. The remaining two still have to be
+generated with `research/fonts/tools/` before they can be judged.
+
+## The render budget
+
+Measured on the board, 80MHz SPI, 480x304 terminal band.
+
+| Path | Cost |
+|---|---|
+| Full repaint, 32x10 grid of 15x30 glyphs | 65 ms |
+| One cell rewritten | 240 us |
+| Full-band `fillRect` alone | 30 ms |
+
+The 30ms is the hardware floor: 480x304 pixels at 16bpp over 80MHz SPI is
+about 29ms of pure transfer, so nothing can clear the band faster than that.
+
+Getting to 65ms took two rounds of measurement, both worth knowing about
+before touching this code:
+
+- Drawing glyphs as horizontal runs straight to the panel cost **518us a
+  glyph**, against a transfer floor near 90us. Almost all of it was per-run SPI
+  transaction setup, because every `drawFastHLine` opens and closes its own.
+- Composing a string into a scratch buffer and pushing it colour-keyed brought
+  that to **264us**. Better, but a colour-keyed push still opens an address
+  window per run of inked pixels, and text is made of short runs.
+- Composing background and glyphs together and pushing the rectangle **opaque**
+  brought the full repaint to **65us a row**, one transfer per row, and removed
+  the separate clear entirely. That is `drawTextOpaque`, and it is what the
+  character grid should use. `drawText` stays transparent for UI text that has
+  to sit on top of something.
+
+240us for one cell means a keystroke is imperceptible. A full repaint at 65ms
+is only reached when the terminal scrolls, and if that ever feels slow the
+ST7796 has a hardware vertical scroll that would make it nearly free.
 
 ## The flash budget
 
@@ -97,11 +131,12 @@ compiling.
    **Done**, except the SD probe, which needs a card. Panel geometry and touch
    confirmed on the board on 2026-08-31; see docs/HARDWARE.md.
    `editor/src/main.cpp`.
-2. **Render layer.** A TFT-backed renderer offering the same primitives as
-   `GfxRenderer`, plus a glyph blit that expands EpdFont's 1bpp glyphs into
-   16-bit colour with a foreground and background. Done right, `EpdFont`,
-   `screen_editor`, `text_editor` and `osk` port with their drawing calls
-   untouched. Proven by drawing all four SCREEN grids.
+2. **Render layer.** **Done**, for the two SCREEN modes whose fonts already
+   exist. `editor/src/tft_renderer.{h,cpp}` offers the fifteen `GfxRenderer`
+   methods that `port-staging/src` actually calls, with matching signatures, so
+   ported code compiles against it unchanged. Metrics agree exactly with the
+   grid: 32 columns of the 15x30 font measure 480 pixels, 40 of the 12x24
+   measure 480. Speed is in "The render budget" below.
 3. **Touch and the on-screen keyboard.** Calibration persisted in NVS, mapped
    into the event shape `osk.cpp` already expects, then `osk.cpp` itself with
    new key geometry. The pressure here is vertical: a usable QWERTY on a

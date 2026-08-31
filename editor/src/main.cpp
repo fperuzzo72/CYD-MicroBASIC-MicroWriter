@@ -1,299 +1,207 @@
-// Milestone 1: hardware bring-up for the Freenove FNK0103N.
+// Milestone 2: the render layer, proven on the panel.
 //
-// This is not MicroBASIC yet. It proves the three things the whole port rests
-// on, on the real board, before a single feature is carried over from the
-// PaperS3: the panel draws with the right geometry and orientation, the
-// resistive touch reads and can be calibrated, and the SD card mounts on its
-// own bus while the panel is using the other one.
+// Milestone 1 established that the board works. This establishes that
+// MicroBASIC's own drawing calls can reach it: TftRenderer offers the fifteen
+// GfxRenderer methods that port-staging/src actually calls, and EpdFont's glyph
+// data is blitted straight to the TFT with no framebuffer in between.
 //
-// The order matters. On the PaperS3 port a display that stayed dark cost days
-// because several unknowns were live at once (see that repo's
-// DEVELOPMENT_LOG). Here each unknown gets its own visible verdict, on screen
-// and on serial, so a failure names itself.
+// What this proves, and why each part is here:
 //
-// What you should see on a working board:
-//   1. The backlight comes on and the screen is not white noise.
-//   2. A one-pixel border touching all four edges, with a filled square in
-//      each corner and the corner's name next to it. If the border is cut off
-//      or the labels are rotated wrong, the rotation or the panel offset is
-//      wrong, not the drawing.
-//   3. A report block: chip, flash, free heap, PSRAM (expected: none), and
-//      the SD verdict.
-//   4. Touch calibration, once, the first time. After that a crosshair that
-//      follows your finger, with mapped and raw coordinates printed live.
+//   The glyph bit walk is right. A full grid of printable ASCII at two
+//   different cell sizes. The unscii cells are 15 and 12 pixels wide, neither a
+//   multiple of eight, which is exactly the case that comes out sheared if the
+//   bitstream is read as byte-aligned per row. If the characters are legible,
+//   the walk is correct.
 //
-// Hold the bottom-left corner for two seconds to force recalibration.
+//   The geometry works out. Both grids are drawn to the column and row counts
+//   proposed in docs/PORTING_PLAN.md, so the numbers in that table can be
+//   looked at rather than argued about.
+//
+//   The speed is known. Each full repaint is timed and reported. This is the
+//   number that decides whether the terminal can repaint whole rows or has to
+//   track dirty cells, and it is measured rather than guessed.
+//
+// Tap the left half of the screen to change SCREEN mode, the right half to
+// change palette.
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <FS.h>
-#include <SD.h>
+#include <EpdFont.h>
+#include <EpdFontFamily.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
+#include <builtinFonts/unscii_12x24.h>
+#include <builtinFonts/unscii_15x30.h>
 
 #include "board_fnk0103n.h"
+#include "tft_renderer.h"
 
 static TFT_eSPI tft;
-
-// The SD card is on VSPI, its own bus. TFT_eSPI has HSPI (USE_HSPI_PORT in
-// platformio.ini), so the two never contend and neither needs to yield to the
-// other. Worth stating because it is one of the few things that got easier
-// coming from the PaperS3, where panel and card shared a bus.
-static SPIClass sdSpi(VSPI);
-
-// Touch calibration is five uint16_t that TFT_eSPI produces and consumes.
-// It lives in NVS rather than a file: ten bytes do not justify mounting a
-// filesystem, and it has to be readable before the SD card is known good.
+static TftRenderer renderer(tft);
 static Preferences prefs;
-static constexpr const char* PREFS_NAMESPACE = "cyd";
-static constexpr const char* PREFS_KEY_TOUCH_CAL = "touchcal";
-static uint16_t touchCal[5] = {0, 0, 0, 0, 0};
 
-static bool sdMounted = false;
+// Font ids are arbitrary sentinels, the same scheme config.h uses on the two
+// earlier devices: they only have to not collide with each other.
+static constexpr int FONT_SCREEN_0 = -2000000001;  // 32 columns
+static constexpr int FONT_SCREEN_1 = -2000000002;  // 40 columns
 
-// --- On-screen report ------------------------------------------------------
-// A cursor that only moves down, so the report reads as a log. Font 2 is
-// TFT_eSPI's 16px built-in, which is the smallest that stays readable on a
-// 3.5" panel at arm's length.
-static int reportY = 0;
-static constexpr int REPORT_LINE_H = 18;
-static constexpr int REPORT_X = 12;
+static const EpdFont fontUnscii15x30(&unscii_15x30);
+static const EpdFont fontUnscii12x24(&unscii_12x24);
 
-static void reportReset(int startY) {
-  reportY = startY;
+// The status bar is one native unscii row tall, so the terminal band below it
+// is 304 pixels. See docs/PORTING_PLAN.md, "Screen geometry".
+static constexpr int STATUS_BAR_H = 16;
+static constexpr int BAND_Y = STATUS_BAR_H;
+static constexpr int BAND_H = SCREEN_H - STATUS_BAR_H;  // 304
+
+struct ScreenMode {
+  const char* name;
+  int fontId;
+  int cellW;
+  int cellH;
+  int cols;
+  int rows;
+};
+
+// Only the two modes whose fonts already exist in the PaperS3 build. SCREEN 2
+// (48 columns, 10x20) and SCREEN 3 (60 columns, native 8x16) still have to be
+// generated with research/fonts/tools/.
+static const ScreenMode kModes[] = {
+    {"SCREEN 0  32x10  15x30", FONT_SCREEN_0, 15, 30, 32, BAND_H / 30},
+    {"SCREEN 1  40x12  12x24", FONT_SCREEN_1, 12, 24, 40, BAND_H / 24},
+};
+static constexpr int kModeCount = sizeof(kModes) / sizeof(kModes[0]);
+
+struct NamedPalette {
+  const char* name;
+  TftRenderer::Palette palette;
+};
+static const NamedPalette kPalettes[] = {
+    {"green", TftRenderer::PhosphorGreen},
+    {"amber", TftRenderer::PhosphorAmber},
+    {"paper", TftRenderer::PaperWhite},
+};
+static constexpr int kPaletteCount = sizeof(kPalettes) / sizeof(kPalettes[0]);
+
+static int g_mode = 0;
+static int g_palette = 0;
+static uint32_t g_lastRepaintUs = 0;
+
+// A row of printable ASCII, offset per row so the pattern is not a repeating
+// stripe and every glyph in the font gets drawn somewhere.
+static void fillPatternRow(char* out, const int cols, const int rowIndex) {
+  for (int c = 0; c < cols; c++) {
+    out[c] = static_cast<char>(0x20 + ((c + rowIndex * 7) % 95));
+  }
+  out[cols] = '\0';
 }
 
-static void reportLine(uint16_t colour, const char* fmt, ...) {
-  char buf[128];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, args);
-  va_end(args);
+static void drawStatusBar() {
+  const ScreenMode& m = kModes[g_mode];
+  renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, true);
 
-  Serial.println(buf);
+  char line[80];
+  snprintf(line, sizeof(line), " %s  %s  %lu ms", m.name, kPalettes[g_palette].name,
+           static_cast<unsigned long>(g_lastRepaintUs / 1000));
 
+  // The status bar uses a TFT_eSPI built-in font rather than an EpdFont: at 16
+  // pixels tall there is no unscii size that fits yet, and generating one just
+  // for the bar would be work spent before the bar's design is settled.
   tft.setTextFont(2);
-  tft.setTextColor(colour, TFT_BLACK);
-  tft.drawString(buf, REPORT_X, reportY);
-  reportY += REPORT_LINE_H;
-}
-
-// --- Geometry proof --------------------------------------------------------
-// Drawn before anything else is trusted. If the border is clipped on one edge
-// or a corner label sits where another should, the panel's rotation or its
-// row/column offset is wrong. That is a different bug from "nothing draws",
-// and this is what tells the two apart at a glance.
-static void drawGeometryProof() {
-  const int w = tft.width();
-  const int h = tft.height();
-
-  tft.fillScreen(TFT_BLACK);
-  tft.drawRect(0, 0, w, h, TFT_WHITE);
-
-  const int m = 10;  // corner marker size
-  tft.fillRect(0,         0,         m, m, TFT_RED);
-  tft.fillRect(w - m,     0,         m, m, TFT_GREEN);
-  tft.fillRect(0,         h - m,     m, m, TFT_BLUE);
-  tft.fillRect(w - m,     h - m,     m, m, TFT_YELLOW);
-
-  tft.setTextFont(2);
+  tft.setTextColor(renderer.getPalette().paper, renderer.getPalette().ink);
   tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_RED, TFT_BLACK);
-  tft.drawString("TL", m + 4, 2);
-  tft.setTextDatum(TR_DATUM);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.drawString("TR", w - m - 4, 2);
-  tft.setTextDatum(BL_DATUM);
-  tft.setTextColor(TFT_BLUE, TFT_BLACK);
-  tft.drawString("BL", m + 4, h - 2);
-  tft.setTextDatum(BR_DATUM);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("BR", w - m - 4, h - 2);
-  tft.setTextDatum(TL_DATUM);
+  tft.drawString(line, 2, 0);
 }
 
-// --- SD --------------------------------------------------------------------
-static bool probeSdCard() {
-  sdSpi.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+static void drawGrid() {
+  const ScreenMode& m = kModes[g_mode];
+  char row[128];
 
-  // 20MHz rather than the default 4MHz: the card is alone on this bus, and a
-  // slow mount is the one part of boot the user actually waits through.
-  if (!SD.begin(PIN_SD_CS, sdSpi, 20000000)) {
-    reportLine(TFT_RED, "SD: mount FAILED (card in? FAT32?)");
-    return false;
+  // No separate clear: each row is composed with its own background and pushed
+  // as one image, so the band never needs wiping first. That is worth roughly
+  // 30ms on its own, which is what the full-band fillRect used to cost.
+  const uint32_t start = micros();
+  for (int r = 0; r < m.rows; r++) {
+    fillPatternRow(row, m.cols, r);
+    const int rowY = BAND_Y + r * m.cellH;
+    renderer.drawTextOpaque(m.fontId, 0, rowY, SCREEN_W, m.cellH, 0, rowY, row);
   }
+  const uint32_t end = micros();
+  g_lastRepaintUs = end - start;
 
-  const uint8_t type = SD.cardType();
-  if (type == CARD_NONE) {
-    reportLine(TFT_RED, "SD: no card detected");
-    return false;
-  }
+  // A single cell, which is what a keystroke actually costs. The number that
+  // decides whether typing feels immediate.
+  const uint32_t cellStart = micros();
+  renderer.drawTextOpaque(m.fontId, 0, BAND_Y, m.cellW, m.cellH, 0, BAND_Y, "A");
+  const uint32_t cellUs = micros() - cellStart;
 
-  const char* typeName = (type == CARD_MMC)  ? "MMC"
-                       : (type == CARD_SD)   ? "SDSC"
-                       : (type == CARD_SDHC) ? "SDHC"
-                                             : "unknown";
-  reportLine(TFT_GREEN, "SD: %s, %llu MB", typeName, SD.cardSize() / (1024ULL * 1024ULL));
+  drawStatusBar();
 
-  // List the root, capped. Proof that reads work, not just that the card
-  // answered its identify command.
-  File root = SD.open("/");
-  if (!root) {
-    reportLine(TFT_ORANGE, "SD: mounted but / would not open");
-    return true;
-  }
-  int shown = 0;
-  for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
-    if (shown < 4) {
-      reportLine(TFT_LIGHTGREY, "  %s%s", entry.name(), entry.isDirectory() ? "/" : "");
-    }
-    shown++;
-    entry.close();
-  }
-  root.close();
-  if (shown > 4) {
-    reportLine(TFT_LIGHTGREY, "  ... and %d more", shown - 4);
-  } else if (shown == 0) {
-    reportLine(TFT_LIGHTGREY, "  (root is empty)");
-  }
-  return true;
+  const int glyphs = m.cols * m.rows;
+  Serial.printf("%s %s | full repaint %lu us (%lu ms) for %d glyphs | one cell %lu us\n", m.name,
+                kPalettes[g_palette].name, static_cast<unsigned long>(g_lastRepaintUs),
+                static_cast<unsigned long>(g_lastRepaintUs / 1000), glyphs,
+                static_cast<unsigned long>(cellUs));
 }
 
-// --- Touch -----------------------------------------------------------------
-static bool loadTouchCalibration() {
-  prefs.begin(PREFS_NAMESPACE, /*readOnly=*/true);
-  const size_t len = prefs.getBytesLength(PREFS_KEY_TOUCH_CAL);
-  bool ok = false;
-  if (len == sizeof(touchCal)) {
-    prefs.getBytes(PREFS_KEY_TOUCH_CAL, touchCal, sizeof(touchCal));
-    ok = true;
-  }
-  prefs.end();
-  return ok;
-}
-
-static void saveTouchCalibration() {
-  prefs.begin(PREFS_NAMESPACE, /*readOnly=*/false);
-  prefs.putBytes(PREFS_KEY_TOUCH_CAL, touchCal, sizeof(touchCal));
-  prefs.end();
-}
-
-static void runTouchCalibration() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextFont(2);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString("Touch each corner arrow", tft.width() / 2, tft.height() / 2 - 20);
-  tft.drawString("Use a fingernail or stylus", tft.width() / 2, tft.height() / 2 + 4);
-  tft.setTextDatum(TL_DATUM);
-  delay(1200);
-
-  tft.calibrateTouch(touchCal, TFT_MAGENTA, TFT_BLACK, 18);
-  tft.setTouch(touchCal);
-  saveTouchCalibration();
-
-  Serial.print("touch calibration:");
-  for (int i = 0; i < 5; i++) Serial.printf(" %u", touchCal[i]);
-  Serial.println();
-}
-
-// --- Setup / loop ----------------------------------------------------------
 void setup() {
   Serial.begin(115200);
-  // The CH340 needs a moment before the first bytes are not lost. Fixed wait
-  // rather than a wait-for-Serial loop, which never returns on this board
-  // because the UART bridge is always "connected".
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- FNK0103N bring-up ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 2, render layer ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
 
   tft.init();
-  // Landscape, USB connector on the right. Flip to 3 if the board sits the
-  // other way round on your desk; nothing else in this file assumes which.
-  tft.setRotation(1);
 
-  drawGeometryProof();
-  delay(1500);
-
-  tft.fillScreen(TFT_BLACK);
-  reportReset(10);
-  reportLine(TFT_CYAN,  "FNK0103N bring-up");
-  reportLine(TFT_WHITE, "panel  : %dx%d, rotation %d", tft.width(), tft.height(), tft.getRotation());
-  reportLine(TFT_WHITE, "chip   : %s rev %d, %d core(s) @ %d MHz",
-             ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores(), getCpuFrequencyMhz());
-  reportLine(TFT_WHITE, "flash  : %u MB", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
-  reportLine(TFT_WHITE, "heap   : %u KB free", (unsigned)(ESP.getFreeHeap() / 1024));
-
-  // Expected to report none. If a unit ever turns up with PSRAM, that changes
-  // what the renderer can do (a full framebuffer becomes affordable), so the
-  // bring-up says so out loud rather than leaving it assumed.
-  const size_t psram = ESP.getPsramSize();
-  if (psram > 0) {
-    reportLine(TFT_YELLOW, "psram  : %u KB  <- unexpected, see PORTING_PLAN", (unsigned)(psram / 1024));
-  } else {
-    reportLine(TFT_WHITE, "psram  : none (as expected)");
-  }
-
-  sdMounted = probeSdCard();
-
-  if (loadTouchCalibration()) {
+  // Touch calibration is whatever milestone 1 stored. If it is missing the
+  // demo still runs; only the tap-to-switch stops working, which is not what
+  // this milestone is proving.
+  uint16_t touchCal[5];
+  prefs.begin("cyd", true);
+  if (prefs.getBytesLength("touchcal") == sizeof(touchCal)) {
+    prefs.getBytes("touchcal", touchCal, sizeof(touchCal));
     tft.setTouch(touchCal);
-    reportLine(TFT_GREEN, "touch  : calibration loaded from NVS");
-    reportLine(TFT_LIGHTGREY, "         hold bottom-left 2s to redo");
-    delay(2500);
+    Serial.println("touch: calibration loaded from NVS");
   } else {
-    reportLine(TFT_YELLOW, "touch  : no calibration, running it now");
-    delay(1500);
-    runTouchCalibration();
+    Serial.println("touch: NO calibration in NVS, taps will be wrong");
   }
+  prefs.end();
 
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextFont(2);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(sdMounted ? "SD ok" : "SD FAILED", REPORT_X, 4);
-  tft.drawString("draw to test touch", REPORT_X, tft.height() - 22);
+  renderer.setOrientation(TftRenderer::LandscapeCounterClockwise);
+  renderer.setPalette(kPalettes[g_palette].palette);
+  renderer.insertFont(FONT_SCREEN_0, EpdFontFamily(&fontUnscii15x30));
+  renderer.insertFont(FONT_SCREEN_1, EpdFontFamily(&fontUnscii12x24));
+  renderer.begin();
+
+  // Metrics, printed once. A monospace font should report a text width that is
+  // exactly the column count times the cell width; if it does not, the advance
+  // arithmetic is wrong and every layout built on it would be too.
+  for (int i = 0; i < kModeCount; i++) {
+    char row[128];
+    fillPatternRow(row, kModes[i].cols, 0);
+    Serial.printf("%s -> lineHeight %d (expect %d), width of %d cols %d (expect %d)\n", kModes[i].name,
+                  renderer.getLineHeight(kModes[i].fontId), kModes[i].cellH, kModes[i].cols,
+                  renderer.getTextWidth(kModes[i].fontId, row), kModes[i].cols * kModes[i].cellW);
+  }
+  Serial.printf("heap: %u KB free\n", static_cast<unsigned>(ESP.getFreeHeap() / 1024));
+
+  drawGrid();
 }
 
 void loop() {
-  static uint32_t cornerHoldStart = 0;
-
   uint16_t x = 0, y = 0;
-  const bool pressed = tft.getTouch(&x, &y);
-
-  if (pressed) {
-    tft.fillCircle(x, y, 3, TFT_CYAN);
-
-    uint16_t rawX = 0, rawY = 0;
-    tft.getTouchRaw(&rawX, &rawY);
-
-    char line[64];
-    snprintf(line, sizeof(line), "x=%3u y=%3u   raw %4u,%4u  z=%4u",
-             x, y, rawX, rawY, tft.getTouchRawZ());
-    tft.setTextFont(2);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString(line, REPORT_X, 4);
-
-    // Bottom-left corner, held. Deliberately a corner the drawing test is
-    // unlikely to wander into, and deliberately a hold rather than a tap, so
-    // a stray press cannot wipe a good calibration.
-    const bool inCorner = (x < 60) && (y > tft.height() - 60);
-    if (inCorner) {
-      if (cornerHoldStart == 0) {
-        cornerHoldStart = millis();
-      } else if (millis() - cornerHoldStart > 2000) {
-        cornerHoldStart = 0;
-        runTouchCalibration();
-        tft.fillScreen(TFT_BLACK);
-      }
+  if (tft.getTouch(&x, &y)) {
+    if (x < SCREEN_W / 2) {
+      g_mode = (g_mode + 1) % kModeCount;
     } else {
-      cornerHoldStart = 0;
+      g_palette = (g_palette + 1) % kPaletteCount;
+      renderer.setPalette(kPalettes[g_palette].palette);
     }
-  } else {
-    cornerHoldStart = 0;
+    drawGrid();
+    // Long enough that one press is one change on a resistive panel, which
+    // chatters far more than the capacitive one on the PaperS3.
+    delay(350);
   }
-
   delay(10);
 }

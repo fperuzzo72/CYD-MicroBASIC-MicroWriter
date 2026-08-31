@@ -142,3 +142,58 @@ something the board did, not something a datasheet said.
 Worth remembering when real work starts: this firmware creates folders and
 writes at the root of whatever card is in the slot. Development wants a card
 that is not somebody's Pi.
+
+## 2026-08-31 -- Milestone 2: the render layer, and three rounds of measuring it
+
+`GfxRenderer` has close to two hundred methods and almost all of them exist for
+electrophoretic paper. Rather than port it, the first thing was to count what
+MicroBASIC and MicroWriter actually call across every file in
+`port-staging/src`. The answer is fifteen: `drawText`, `getTextWidth`,
+`getLineHeight`, `fillRect`, `drawRect`, `clearScreen`, `displayBuffer`,
+`insertFont`, `getFontMap`, `getSdCardFonts`, `setFontCacheManager`,
+`setOrientation`, `getOrientation`, `getScreenWidth`/`getScreenHeight`, and
+`tapToLogical`. `TftRenderer` implements those with matching signatures, so
+ported code compiles against it without edits.
+
+The glyph bit walk had to match `renderCharImpl` exactly, and the part that
+matters is that `pixelPosition` runs continuously through a glyph and is never
+padded at row boundaries. Any font whose width is not a multiple of eight
+shears if you assume per-row alignment. The two unscii cells here are 15 and 12
+wide, so the demo grid is itself the test, and it renders clean.
+
+Metrics agree with the geometry exactly: 32 columns of 15x30 measure 480
+pixels, 40 columns of 12x24 measure 480. That is the advance arithmetic
+(previous advance and current kern summed in 12.4 fixed point, then snapped
+together) carried over unchanged and confirmed working.
+
+**Three rounds on speed**, because the first number was bad and guessing at the
+cause would have been the wrong move:
+
+| Approach | Per glyph | Full 32x10 repaint |
+|---|---|---|
+| Horizontal runs straight to the panel | 518 us | 196 ms |
+| Composed in a scratch, colour-keyed push | 264 us | 115 ms |
+| Composed opaque, one push per row | n/a | **65 ms** |
+
+Instrumenting the split was what made it obvious: the full-band clear was 30ms
+of the original 196ms and is the hardware floor (480x304 at 16bpp over 80MHz
+SPI is ~29ms of transfer), which left 166ms for 320 glyphs against a transfer
+floor near 90us each. So five sixths of the glyph time was SPI transaction
+setup, not pixels. `drawFastHLine` opens and closes a transaction per call, and
+a glyph is dozens of runs.
+
+The opaque path composes background and glyphs together and pushes the whole
+rectangle in one transfer, which also removes the need to clear first. One cell
+now costs 240us, so a keystroke is imperceptible.
+
+**One bug on the way, worth naming because it looks like something else.**
+After switching to `pushImage` the colours came out wrong while the background
+stayed right. That reads like a font or palette bug and is neither:
+`TFT_eSPI`'s drawing primitives put a colour's bytes on the wire in panel
+order, but `pushImage` streams the array raw and only swaps each 16-bit value
+when `_swapBytes` is set, which it is not by default. So 0x2FE7 green arrived
+as 0xE72F. `setSwapBytes(true)` in `TftRenderer::begin()`, with the reasoning
+written next to it.
+
+Next: generate the 10x20 and 8x16 unscii sizes so all four SCREEN modes exist,
+then milestone 3, touch and the on-screen keyboard.

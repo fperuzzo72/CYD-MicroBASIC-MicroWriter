@@ -422,3 +422,63 @@ and costs one condition in the row loop.
 Enter handles CLS and SCREEN, because those are terminal operations rather than
 language ones, and answers anything else the way a BASIC does when it does not
 understand. Milestone 5 replaces that with the interpreter.
+
+## 2026-08-31 -- Milestone 5: the interpreter, and a wrong call corrected mid-port
+
+`fetch.sh` pulled Stefan Lenz's IoT BASIC at its pinned commit and all six
+patches applied unchanged. `tb_bridge.cpp`, `tb_runtime.cpp`,
+`terminal_input.cpp` and `input_handler.cpp` came over.
+
+**The integration turned out to be a deletion.** `main.cpp` had grown a
+hand-rolled Enter handler in milestone 4, with its own CLS and SCREEN and its
+own idea of which rows to redraw. All of it is gone. The chain that replaced it
+was already written, in three files that had never met on this device:
+
+```
+osk.cpp emits a HID keycode and modifier byte
+  -> enqueueKeyEvent(), the same call a BLE keyboard makes
+    -> processAllInput() in terminal_input.cpp
+      -> screen_editor for editing keys, tbExecuteLine() for Enter
+        -> the interpreter, printing back through the runtime's outch()
+```
+
+`osk.h` promised exactly this two milestones ago ("the SAME wire format
+`input_handler.cpp::enqueueKeyEvent()` already expects"). It held. `onOskKey`
+is now one line.
+
+**The file I/O had to be rewritten, and I called it wrong first.** Grepping
+`tb_runtime.cpp` for `SDCardManager`, `SD.` and `sdCard` found only the include
+and a comment, so it went down as another dead include like the two before it.
+It is not: the file reaches the card through `SdMan` and `FsFile`, neither of
+which those patterns match. The compiler found what the grep missed, which is
+the second time on this port that a regex has been the weak link.
+
+The replacement is Arduino's `SD` library. `SDCardManager` wraps SdFat and
+lives in freeink-sdk, which is an e-paper SDK with a panel driver and a power
+manager attached; pulling all of that in for file handles is not a trade worth
+making when this board's card sits on its own bus with nothing to arbitrate.
+The two APIs line up almost exactly, so it was a substitution across about
+twenty lines rather than a rewrite. Two places genuinely differ: open modes are
+strings rather than `O_*` flags, and `File::name()` returns a full path where
+`FsFile::getName()` filled a buffer with a bare name, so the separator has to
+be stripped or `FILES` would list paths and `LOAD` would not find them.
+
+Paths are deliberately unchanged from the PaperS3, so a card carries between
+the two machines.
+
+**Six symbols were missing and are now defined out loud.** Two are physical
+button hooks, and this board genuinely has none, so they are permanent no-ops
+rather than milestones. `SYNC` and `EDITOR` say they are not built yet.
+`READER` and `VC` say they are PaperS3-only, because they exist for that
+device's shared dual-boot layout with CrossPoint and have nowhere to go here. A
+command that does nothing looks like a bug; one that says what is missing is a
+to-do list readable from the machine itself.
+
+Flash with the interpreter linked: 466429 of 3211264, 14.5%. RAM 48796 of
+327680, which is the 16KB of BASIC program memory plus interpreter state. Free
+heap at the prompt drops from 321KB to 266KB.
+
+The `microwriter` env stops building here. What it excludes is exactly what
+`main.cpp` draws, and the replacement is milestone 7. It fails on one `#error`
+saying so rather than eighteen linker errors, which is the difference between a
+note and a puzzle.

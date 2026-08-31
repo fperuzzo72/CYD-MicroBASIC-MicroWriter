@@ -51,9 +51,14 @@ character grid, its scrolling and the logical-line tracking that makes editing a
 listed line in place work. Its row count and centring margin are derived from a
 band rather than stored as per-mode constants measured on another panel.
 
-The interpreter is not ported yet: Enter handles `CLS` and `SCREEN`, which are
-terminal operations, and answers anything else the way a BASIC does when it does
-not understand. The PaperS3 sources sit verbatim in
+Milestone 5, the interpreter, is **done**. It is a BASIC computer now: type a
+numbered line and it is program text, type anything else and it runs. The
+interpreter is Stefan Lenz's IoT BASIC, fetched at a pinned commit by
+`patches/tinybasic/fetch.sh` and never vendored here.
+
+The `microwriter` env does not build yet, on purpose and with one `#error`
+explaining why: what it excludes is exactly what `main.cpp` currently draws, and
+the prose editor that would replace it is milestone 7. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
 

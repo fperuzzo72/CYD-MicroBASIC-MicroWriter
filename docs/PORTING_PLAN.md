@@ -134,9 +134,16 @@ exists, or they all move to the card. That decision belongs to the MicroWriter
 milestone, not before.
 
 The other risk is WiFi and NimBLE in the same binary on a classic ESP32, and it
-is now the sharper of the two. The intent for this device is a physical
-keyboard with the on-screen one as fallback, so BLE is not the thing that gives
-way if the two do not fit together. Measure before milestone 8, not after.
+is now the sharper of the two.
+
+**The order is decided: the keyboard outranks WiFi.** Both if they fit, and if
+they do not, WiFi is what goes. That is a deliberate call about what this
+machine is. A BASIC computer you cannot type on is not one; a BASIC computer
+you cannot sync over the network is a BASIC computer with a memory card, which
+is what every machine this one is imitating actually was.
+
+So milestone 9 is not conditional on milestone 8 leaving room. Measure the BLE
+build first, then see what is left for WiFi, rather than the other way round.
 
 ## Milestones
 
@@ -173,8 +180,21 @@ compiling.
    there, meaningless anywhere else. Enter handles CLS and SCREEN, which are
    terminal operations rather than language ones, and answers anything else the
    way a BASIC does when it does not understand.
-5. **Interpreter.** `patches/tinybasic/fetch.sh`, then `tb_bridge.cpp`,
-   `tb_runtime.cpp`, `terminal_input.cpp`. At this point it is MicroBASIC.
+5. **Interpreter.** **Done.** `fetch.sh` pulls Stefan Lenz's IoT BASIC at its
+   pinned commit and applies the six patches; `tb_bridge.cpp`, `tb_runtime.cpp`,
+   `terminal_input.cpp` and `input_handler.cpp` are ported. The one real change
+   is that the runtime's file I/O moves from freeink-sdk's `SDCardManager` and
+   its SdFat `FsFile` handles to Arduino's `SD` library, because the card is on
+   its own bus here and pulling in an e-paper SDK for file handles is not a
+   trade worth making. Paths are unchanged, so a card moves between this and the
+   PaperS3.
+
+   Flash with the interpreter linked: 466429 of 3211264 (14.5%). RAM 48796 of
+   327680, which is the interpreter's 16KB of program memory plus its state.
+
+   The `microwriter` env stops building at this milestone, on purpose and with
+   one `#error` rather than a wall of linker failures: what it excludes is
+   exactly what `main.cpp` draws, and its replacement is milestone 7.
 6. **Storage.** `file_manager.cpp`, `file_browser.cpp`, and `sd_datetime.cpp`
    with the RTC path removed and only SNTP left.
 7. **Prose editor.** `text_editor.cpp`, and the `microwriter` env becomes a

@@ -1,15 +1,19 @@
-// Milestone 4: the real terminal.
+// Milestone 5: the interpreter.
 //
-// The forty-line echo buffer from milestone 3 is gone. screen_editor.cpp is
-// here instead: the character grid, its scrolling, and the logical-line
-// tracking that makes "type a numbered line and it is program text, type
-// anything else and it runs" work. It came over from the PaperS3 with one real
-// change, described below.
+// This file no longer decides what Enter means, and that is the point. The
+// chain is the one both earlier devices use, and every link of it was already
+// written:
 //
-// There is still no interpreter. Enter handles CLS and SCREEN itself, because
-// those are terminal operations rather than language ones, and answers anything
-// else the way a BASIC does when it does not understand. Milestone 5 replaces
-// that with the real thing.
+//   osk.cpp emits a USB HID keycode and modifier byte
+//     -> enqueueKeyEvent(), the same call a BLE keyboard would make
+//       -> processAllInput() in terminal_input.cpp
+//         -> screen_editor for editing keys, tbExecuteLine() for Enter
+//           -> the interpreter, printing back through the runtime's outch()
+//
+// osk.h promised this would work ("the SAME wire format
+// input_handler.cpp::enqueueKeyEvent() already expects"), and it does. The
+// placeholder Enter handler from milestone 4, with its hand-rolled CLS and
+// SCREEN, is gone: those are real commands now.
 //
 // The one real change: screen_editor derives its row count and centring margin
 // from a band it is given, rather than reading them from a per-mode table of
@@ -24,6 +28,12 @@
 // cursor lives at the bottom of the used area. Making the band shrink instead
 // is a one-line change in applyBand() if that ever becomes the common case.
 
+#if MICROWRITER
+#error "The microwriter env is not buildable yet: it excludes screen_editor and \
+the interpreter, and main.cpp has nothing else to draw until text_editor.cpp is \
+ported in milestone 7. Build -e fnk0103n. See docs/PORTING_PLAN.md."
+#endif
+
 #include <Arduino.h>
 #include <EpdFont.h>
 #include <EpdFontFamily.h>
@@ -36,10 +46,16 @@
 
 #include <cstring>
 
+#include <FS.h>
+#include <SD.h>
+#include <SPI.h>
+
 #include "board_fnk0103n.h"
 #include "config.h"
+#include "input_handler.h"
 #include "osk.h"
 #include "screen_editor.h"
+#include "tb_bridge.h"
 #include "tft_renderer.h"
 
 static TFT_eSPI tft;
@@ -112,6 +128,10 @@ static void drawTerminalRow(const int r) {
 }
 
 static void drawCursor(const bool on) {
+  // No cursor while a program has control. A cursor means "waiting for you to
+  // type", and nothing is; on a program that repaints cells in place it reads
+  // as a block stuck to whatever it drew last.
+  if (tbIsRunning()) return;
   const int cx = screenEditorGetCursorCol() * screenEditorCellW();
   const int cy = screenEditorMarginY() + screenEditorGetCursorRow() * screenEditorCellH();
   if (on) {
@@ -156,104 +176,66 @@ static void drawAll() {
   drawCursor(g_cursorOn);
 }
 
-// screen_editor.cpp calls this when a running program needs its output on the
-// panel mid-run. Nothing is buffered here, so there is nothing to flush; it
-// stays because the interpreter will call it in milestone 5.
-void screenEditorFlushDisplay() {}
-
-// Trims and upper-cases a logical line into `out`, the way a BASIC reads its
-// input: case-insensitive commands, leading and trailing space ignored.
-static void normaliseLine(const char* in, char* out, const size_t outSize) {
-  while (*in == ' ') in++;
-  size_t n = 0;
-  while (*in && n + 1 < outSize) out[n++] = static_cast<char>(toupper(*in++));
-  while (n > 0 && out[n - 1] == ' ') n--;
-  out[n] = '\0';
-}
-
-// Everything Enter does until there is an interpreter.
+// Called by the runtime's byield() while a program is running, so a loop's
+// PRINT output appears as it goes rather than all at once when the program
+// stops. On e-paper this had to block on a panel refresh; here the pixels are
+// already out by the time drawTerminal() returns, so it is just a repaint.
 //
-// CLS and SCREEN are here rather than waiting for milestone 5 because they are
-// terminal operations, not language ones: they change this file's state and
-// nothing else. Everything else gets the answer a BASIC gives when it does not
-// understand, which is honest about what is and is not built.
-static void handleEnter() {
-  char raw[MAX_PROGRAM_LINE_LEN];
-  screenEditorGetLogicalLineText(raw, sizeof(raw));
-
-  char cmd[MAX_PROGRAM_LINE_LEN];
-  normaliseLine(raw, cmd, sizeof(cmd));
-
-  if (cmd[0] == '\0') {
-    screenEditorStartNewInputLine();
-  } else if (isdigit(static_cast<unsigned char>(cmd[0]))) {
-    // A numbered line is program text. With no interpreter to store it, the
-    // only thing to do is what a real machine does visually: leave it on the
-    // screen and drop to a fresh input line.
-    screenEditorStartNewInputLine();
-  } else if (strcmp(cmd, "CLS") == 0) {
-    screenEditorReset();
-    screenEditorTermPrintLine("Ok");
-  } else if (strncmp(cmd, "SCREEN ", 7) == 0 && cmd[7] >= '0' && cmd[7] <= '3' && cmd[8] == '\0') {
-    screenEditorSetMode(cmd[7] - '0');
-    applyBand();
-    screenEditorTermPrintLine("Ok");
-  } else {
-    screenEditorClearLogicalLine();
-    screenEditorTermPrintLine("Syntax error");
-    screenEditorTermPrintLine("Ok");
-  }
+// byield() throttles this by time rather than by print volume, which matters:
+// a full repaint is 143ms and doing one per PRINT would make a program crawl.
+void screenEditorFlushDisplay() {
   drawTerminal();
-  drawStatusBar();
 }
 
+// --- What is not built here yet -------------------------------------------
+//
+// terminal_input.cpp and tb_bridge.cpp reach out to four commands and two
+// button hooks. Defining them here, out loud, rather than stubbing them into
+// silence: a MENU command that does nothing looks like a bug, and one that says
+// what is missing is a to-do list you can read from the machine itself.
+
+// This board has no physical buttons. Not "none wired up yet": the FNK0103N has
+// a reset and a boot button on the back and nothing on the front, where the X4
+// has a d-pad and the PaperS3 has a power key. These two are permanent no-ops
+// rather than milestones, which is why they say so instead of printing.
+void physicalButtonsRearm() {}
+void pumpPhysicalButtonsForProgram() {}
+
+static void notBuiltYet(const char* what) {
+  char msg[64];
+  snprintf(msg, sizeof(msg), "?%s not built yet", what);
+  screenEditorTermPrintLine(msg);
+}
+
+// Milestone 8. See docs/PORTING_PLAN.md, and the flash budget note there:
+// this is the one that may not fit alongside the BLE keyboard, and if it comes
+// to that, this is what gives way.
+void startWifiSyncFromCommand() { notBuiltYet("SYNC"); }
+
+// Milestone 7, the prose editor.
+void startEditorFromCommand() { notBuiltYet("EDITOR"); }
+
+// Neither of these is coming. Both exist for the PaperS3's shared dual-boot
+// layout with CrossPoint: one switches firmware slots, the other browses that
+// reader's library. This board has a single app partition and no CrossPoint.
+// They stay reachable as commands only because terminal_input.cpp dispatches
+// them; the honest answer is that they have nowhere to go.
+void startReaderSwitchFromCommand() { screenEditorTermPrintLine("?READER is PaperS3 only"); }
+void startVcFromCommand() { screenEditorTermPrintLine("?VC is PaperS3 only"); }
+
+// A tapped key goes into the same queue a keyboard would feed, and nothing
+// here interprets it. Everything that used to be in this function now lives in
+// terminal_input.cpp, where it is shared with whatever else ever produces key
+// events.
 static void onOskKey(const uint8_t hid, const uint8_t modifiers) {
-  const int rowBefore = screenEditorGetCursorRow();
-
-  switch (hid) {
-    case OSK_HID_BACKSPACE: screenEditorBackspace(); break;
-    case OSK_HID_LEFT:      screenEditorMoveCursor(0, -1); break;
-    case OSK_HID_RIGHT:     screenEditorMoveCursor(0, 1); break;
-    case HID_KEY_UP:        screenEditorMoveCursor(-1, 0); break;
-    case HID_KEY_DOWN:      screenEditorMoveCursor(1, 0); break;
-    case OSK_HID_ESCAPE:
-      screenEditorReset();
-      drawTerminal();
-      drawCursor(g_cursorOn);
-      return;
-    default: {
-      const char ch = oskHidToChar(hid, modifiers);
-      if (ch == '\n') {
-        handleEnter();
-        drawCursor(g_cursorOn);
-        return;
-      }
-      if (ch == 0) return;  // Tab and the modifiers themselves have nothing to insert
-      screenEditorInsertCodepoint(static_cast<uint32_t>(static_cast<unsigned char>(ch)));
-      break;
-    }
-  }
-
-  // Typing usually touches one row. It touches two when it wraps onto the next,
-  // and the whole screen when that wrap scrolled, which is the only case worth
-  // repainting everything for.
-  const int rowNow = screenEditorGetCursorRow();
-  if (rowNow == rowBefore) {
-    drawTerminalRow(rowNow);
-  } else if (rowNow == rowBefore + 1) {
-    drawTerminalRow(rowBefore);
-    drawTerminalRow(rowNow);
-  } else {
-    drawTerminal();
-  }
-  drawCursor(g_cursorOn);
+  enqueueKeyEvent(hid, modifiers, true);
 }
 
 void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 4, terminal ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 5, interpreter ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
@@ -280,6 +262,24 @@ void setup() {
   applyBand();
   screenEditorReset();
 
+  // The card, before the interpreter: tbSetup() probes for an autoexec.bas and
+  // fsbegin() creates the program directory, and both need a mounted card. Its
+  // own VSPI bus, so nothing here contends with the panel on HSPI.
+  static SPIClass sdSpi(VSPI);
+  sdSpi.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+  const bool sdOk = SD.begin(PIN_SD_CS, sdSpi, 20000000);
+  Serial.printf("SD: %s\n", sdOk ? "mounted" : "NOT mounted");
+
+  inputSetup();
+
+  // Quiet for the boot probe only: the interpreter looks for an autoexec.bas
+  // with a plain open, so not finding one is the normal case rather than a
+  // fault worth printing on a fresh screen.
+  tbRuntimeSetQuiet(true);
+  tbSetup();
+  tbRuntimeSetQuiet(false);
+
+  screenEditorReset();
   char banner[64];
   screenEditorTermPrintLine("MicroBASIC 0.1");
   snprintf(banner, sizeof(banner), "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
@@ -328,6 +328,17 @@ void loop() {
       }
     }
     delay(220);
+    // Fall through rather than returning: the key just queued has to be
+    // processed in this same pass, or nothing appears until the next touch.
+  }
+
+  // Everything a keystroke does happens in here, including running a program.
+  // A RUN can sit inside this call for as long as the program takes.
+  if (processAllInput() > 0) {
+    drawTerminal();
+    drawStatusBar();
+    drawCursor(true);
+    g_cursorOn = true;
     return;
   }
 

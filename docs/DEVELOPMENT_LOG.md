@@ -346,3 +346,34 @@ units:  0                     24| 24 | 26 | 28  32
 
 Confirmed on the panel before this: the keys are hittable with a fingertip, not
 just a fingernail, and one-shot Shift behaves.
+
+## 2026-08-31 -- The keycap gap was a constant that did not travel
+
+Both of these came from looking at the keyboard on the panel rather than at the
+code, and the second is the more interesting.
+
+**Row 4 keeps its arrows one size.** The previous change widened the right
+Shift and the Right arrow together, because the arithmetic of the three-column
+cluster forces those two keys to the same width. Seen on the panel, the three
+arrows matching each other matters more than the bottom-right key matching the
+Shift above it. So Right goes back to 2 half-units and the last two are an
+unlabelled Shift instead of a gap. It lands directly under the right half of
+row 3's Shift, which is where a second Shift belongs anyway, and a filler that
+does something beats a filler that does not.
+
+**The inset was tuned for a panel twice this wide.** `kInset` was 4 in both
+projects, and that is 13% of the PaperS3's 30px half-unit but 27% of this
+panel's 15px one. The margin doubled in visual weight without anyone touching
+it, and the keys read as small squares swimming in space. It is now derived
+from the unit (`g_unitPx / 7`), which lands at 4 on the PaperS3's geometry and 2
+here, and stays right on whatever comes next.
+
+Keycaps went from 22x24 to 26x28 pixels with the gap between them halving from
+8px to 4px. Drawing the keyboard costs 36.7ms rather than 34ms, which is
+just the extra area.
+
+Worth keeping in mind for the rest of the port: this is the first constant found
+that was silently wrong rather than visibly broken, and it was wrong because it
+was absolute where it should have been proportional. There are probably others.
+Anything in the ported sources expressed in pixels rather than in a ratio of
+something is a candidate.

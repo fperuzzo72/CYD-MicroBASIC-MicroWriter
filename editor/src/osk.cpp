@@ -136,8 +136,12 @@ const KeyDef kRow2[] = {
 // lines up:
 //
 //   row 3:  Shift(6) | 10 keys      | /  | ^  | Shift(4)
-//   row 4:  Ctrl(5) Alt(3) Space(16)| <  | v  | >    (4)
-//   units:  0                     24| 24 | 26 | 28  32
+//   row 4:  Ctrl(5) Alt(3) Space(16)| <  | v  | >  | Shift
+//   units:  0                     24| 24 | 26 | 28 | 30  32
+//
+// The three arrows keep one width between them, so row 4's last two half-units
+// are a second, unlabelled Shift rather than a wider Right. It sits under the
+// right half of row 3's Shift, which is where a second Shift belongs anyway.
 const KeyDef kRow3[] = {
     {0, 6, 1, KeyKind::Shift, "Shift"},
     {0x1D, 2, 1, KeyKind::Normal, nullptr}, {0x1B, 2, 1, KeyKind::Normal, nullptr},
@@ -161,7 +165,13 @@ const KeyDef kRow4[] = {
     {HID_SPACE, 16, 1, KeyKind::Normal, ""},
     {HID_LEFT, 2, 1, KeyKind::Normal, "<"},
     {HID_DOWN, 2, 1, KeyKind::Normal, "v"},
-    {HID_RIGHT, 4, 1, KeyKind::Normal, ">"},
+    {HID_RIGHT, 2, 1, KeyKind::Normal, ">"},
+    // Unlabelled, and a Shift. The three arrows want to stay the same size as
+    // each other more than the bottom-right key wants to match the Shift above
+    // it, so Right goes back to 2 and this fills the last two half-units rather
+    // than leaving a gap. Making the filler a second Shift costs nothing and
+    // puts one directly under the right Shift of the row above.
+    {0, 2, 1, KeyKind::Shift, ""},
 };
 
 struct Row {
@@ -286,7 +296,18 @@ void oskDraw() {
   // reading is noticeably less precise than a phone's, so keys read more
   // clearly as separate targets with a bit more breathing room between
   // them, and rounded corners read less like a rigid uniform grid.
-  constexpr int kInset = 4;
+  // Gap between adjacent keycaps, as half of it on each key.
+  //
+  // This was 4 for both panels until it was looked at on this one. The PaperS3
+  // has 30px half-units, so 4px of inset is 13% of the smallest key; here the
+  // half-unit is 15px and the same 4px is 27% of it. The margin doubled in
+  // visual weight without anyone changing it, and the keys read as small
+  // squares swimming in space.
+  //
+  // Derived from the unit instead, so it lands at 4 on the PaperS3's geometry
+  // and 2 on this one, and stays right on whatever comes next. Never below 1:
+  // keycaps sharing a border edge would read as one long key.
+  const int kInset = g_unitPx >= 8 ? g_unitPx / 7 : 1;
   // Square, not rounded. On the PaperS3 this was 6, and it looked right there.
   // Here the Shift-hint that digit and symbol keys carry in their top-right
   // corner lands ON the curve, because the keys are half the size and the

@@ -83,8 +83,8 @@ Measured on the board, 80MHz SPI, 480x304 terminal band.
 | Full repaint, 32x10 grid of 15x30 glyphs | 65 ms |
 | One cell rewritten | 240 us |
 | Full-band `fillRect` alone | 30 ms |
-| On-screen keyboard, all six rows | 34 ms |
-| Full screen, terminal and keyboard | 88 ms |
+| On-screen keyboard, all six rows | 37 ms |
+| Full screen, terminal and keyboard | 91 ms |
 
 The 30ms is the hardware floor: 480x304 pixels at 16bpp over 80MHz SPI is
 about 29ms of pure transfer, so nothing can clear the band faster than that.

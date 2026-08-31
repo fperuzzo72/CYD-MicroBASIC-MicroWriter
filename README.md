@@ -46,7 +46,14 @@ name, and it emits standard USB HID keycodes, which is the same wire format the
 editor and interpreter already expect. With the keyboard up the terminal has 7
 rows of 60 columns; folded away, 19.
 
-The interpreter and the real terminal are not ported yet. The PaperS3 sources sit verbatim in
+Milestone 4, the terminal, is **done**. `screen_editor.cpp` carries the
+character grid, its scrolling and the logical-line tracking that makes editing a
+listed line in place work. Its row count and centring margin are derived from a
+band rather than stored as per-mode constants measured on another panel.
+
+The interpreter is not ported yet: Enter handles `CLS` and `SCREEN`, which are
+terminal operations, and answers anything else the way a BASIC does when it does
+not understand. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
 

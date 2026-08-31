@@ -1,22 +1,28 @@
-// Milestone 3: touch and the on-screen keyboard.
+// Milestone 4: the real terminal.
 //
-// Milestone 1 proved the board, milestone 2 proved the drawing. This proves
-// input: osk.cpp comes over from the PaperS3 with nothing changed but its
-// include and the renderer's type name, because TftRenderer matches
-// GfxRenderer's signatures. It emits standard USB HID keycodes and a standard
-// modifier bitmask, which is the same wire format input_handler.cpp already
-// expects, so the editor and the interpreter will accept touch input without
-// knowing where it came from.
+// The forty-line echo buffer from milestone 3 is gone. screen_editor.cpp is
+// here instead: the character grid, its scrolling, and the logical-line
+// tracking that makes "type a numbered line and it is program text, type
+// anything else and it runs" work. It came over from the PaperS3 with one real
+// change, described below.
 //
-// The echo area here is NOT the terminal. screen_editor.cpp is milestone 4;
-// this is forty lines of line buffer whose only job is to show that a tapped
-// key becomes a character on screen. Nothing here should survive into the
-// real thing.
+// There is still no interpreter. Enter handles CLS and SCREEN itself, because
+// those are terminal operations rather than language ones, and answers anything
+// else the way a BASIC does when it does not understand. Milestone 5 replaces
+// that with the real thing.
 //
-// The layout question this milestone exists to answer: the keyboard needs six
-// rows and this panel is 320 pixels tall, so how many terminal rows are left
-// while it is up, and are the keys big enough to hit on a resistive panel.
-// Tap the status bar to fold the keyboard away and see the full terminal.
+// The one real change: screen_editor derives its row count and centring margin
+// from a band it is given, rather than reading them from a per-mode table of
+// numbers measured against a 960x540 panel.
+//
+// The band is the whole terminal area, always, so the grid keeps its full 19
+// rows and the on-screen keyboard is painted over the bottom of them. That is
+// the PaperS3's behaviour and it is a deliberate choice here: the plan for this
+// device is a physical keyboard, with the on-screen one as the fallback it is
+// there. The cost, worth stating because it is real, is that while the
+// on-screen keyboard is up the cursor can sit behind it, since a terminal's
+// cursor lives at the bottom of the used area. Making the band shrink instead
+// is a one-line change in applyBand() if that ever becomes the common case.
 
 #include <Arduino.h>
 #include <EpdFont.h>
@@ -28,18 +34,17 @@
 #include <builtinFonts/unscii_15x30.h>
 #include <builtinFonts/unscii_8x16.h>
 
+#include <cstring>
+
 #include "board_fnk0103n.h"
+#include "config.h"
 #include "osk.h"
+#include "screen_editor.h"
 #include "tft_renderer.h"
 
 static TFT_eSPI tft;
 static TftRenderer renderer(tft);
 static Preferences prefs;
-
-static constexpr int FONT_SCREEN_0 = -2000000001;  // 32 columns
-static constexpr int FONT_SCREEN_1 = -2000000002;  // 40 columns
-static constexpr int FONT_SCREEN_2 = -2000000003;  // 48 columns
-static constexpr int FONT_SCREEN_3 = -2000000004;  // 60 columns
 
 static const EpdFont fontUnscii15x30(&unscii_15x30);
 static const EpdFont fontUnscii12x24(&unscii_12x24);
@@ -47,31 +52,9 @@ static const EpdFont fontUnscii10x20(&unscii_10x20);
 static const EpdFont fontUnscii8x16(&unscii_8x16);
 
 static constexpr int STATUS_BAR_H = 16;
-
-// Six rows of keys at 32 pixels each. 32 is the number this milestone is
-// really testing: on a 74mm-wide panel a 2-half-unit key comes out about
-// 4.6mm across, which is fine for a fingernail or a stylus and small for a
-// fingertip. If it turns out to be too small in the hand, the fix is fewer
-// rows (fold Esc and the arrows into a modifier layer), not smaller type.
 static constexpr int OSK_ROWS = 6;
 static constexpr int OSK_ROW_H = 32;
 static constexpr int OSK_H = OSK_ROWS * OSK_ROW_H;  // 192
-
-struct ScreenMode {
-  const char* name;
-  int fontId;
-  int cellW;
-  int cellH;
-  int cols;
-};
-
-static const ScreenMode kModes[] = {
-    {"SCR0 32c", FONT_SCREEN_0, 15, 30, 32},
-    {"SCR1 40c", FONT_SCREEN_1, 12, 24, 40},
-    {"SCR2 48c", FONT_SCREEN_2, 10, 20, 48},
-    {"SCR3 60c", FONT_SCREEN_3, 8, 16, 60},
-};
-static constexpr int kModeCount = sizeof(kModes) / sizeof(kModes[0]);
 
 struct NamedPalette {
   const char* name;
@@ -85,70 +68,84 @@ static const NamedPalette kPalettes[] = {
 };
 static constexpr int kPaletteCount = sizeof(kPalettes) / sizeof(kPalettes[0]);
 
-// Boots in SCREEN 3, the 60-column mode: the most rows the band will hold, and
-// legible on the panel because unscii-16 is drawn for this cell size rather
-// than resampled down to it. Confirmed by looking at all four on hardware.
-static int g_mode = 3;
 static int g_palette = 0;
 static bool g_oskVisible = true;
+static bool g_cursorOn = true;
 
-static constexpr int MAX_ROWS = 20;
-static constexpr int MAX_COLS = 64;
-static char g_text[MAX_ROWS][MAX_COLS + 1];
-static int g_row = 0;
-static int g_col = 0;
-
-static int termY() { return STATUS_BAR_H; }
-static int termH() { return SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0); }
-static int termRows() {
-  const int r = termH() / kModes[g_mode].cellH;
-  return r > MAX_ROWS ? MAX_ROWS : r;
+// Carried over from the PaperS3's main.cpp unchanged. Three-byte forms are not
+// reachable from this keyboard, but are handled rather than silently truncated
+// if that ever changes.
+static int codepointToUtf8(uint32_t cp, char* out) {
+  if (cp < 0x80) {
+    out[0] = static_cast<char>(cp);
+    return 1;
+  }
+  if (cp < 0x800) {
+    out[0] = static_cast<char>(0xC0 | (cp >> 6));
+    out[1] = static_cast<char>(0x80 | (cp & 0x3F));
+    return 2;
+  }
+  out[0] = static_cast<char>(0xE0 | (cp >> 12));
+  out[1] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+  out[2] = static_cast<char>(0x80 | (cp & 0x3F));
+  return 3;
 }
-static int termCols() {
-  const int c = kModes[g_mode].cols;
-  return c > MAX_COLS ? MAX_COLS : c;
+
+// The terminal owns everything below the status bar, whether or not the
+// keyboard is drawn over part of it. See the note at the top of this file.
+static void applyBand() {
+  screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H);
 }
 
-static void clearText() {
-  for (int r = 0; r < MAX_ROWS; r++) g_text[r][0] = '\0';
-  g_row = 0;
-  g_col = 0;
+// One row, composed and pushed in a single transfer. This is the path a
+// keystroke takes, and the reason drawTextOpaque exists.
+static void drawTerminalRow(const int r) {
+  char utf8Row[SCREEN_EDITOR_MAX_COLS * 3 + 1];
+  const int cols = screenEditorCols();
+  int o = 0;
+  for (int c = 0; c < cols; c++) {
+    o += codepointToUtf8(screenEditorGetCell(r, c), utf8Row + o);
+  }
+  utf8Row[o] = '\0';
+  const int y = screenEditorMarginY() + r * screenEditorCellH();
+  renderer.drawTextOpaque(screenEditorFontId(), 0, y, SCREEN_W, screenEditorCellH(), 0, y, utf8Row);
+}
+
+static void drawCursor(const bool on) {
+  const int cx = screenEditorGetCursorCol() * screenEditorCellW();
+  const int cy = screenEditorMarginY() + screenEditorGetCursorRow() * screenEditorCellH();
+  if (on) {
+    renderer.fillRect(cx, cy, screenEditorCellW(), screenEditorCellH(), true);
+  } else {
+    drawTerminalRow(screenEditorGetCursorRow());
+  }
+}
+
+static void drawTerminal() {
+  const int rows = screenEditorRows();
+  for (int r = 0; r < rows; r++) drawTerminalRow(r);
+  // The band's centring margin, above and below the rows, is not covered by any
+  // row's own rectangle and would otherwise keep whatever the previous SCREEN
+  // mode left there.
+  const int top = STATUS_BAR_H;
+  const int height = SCREEN_H - STATUS_BAR_H;
+  const int used = rows * screenEditorCellH();
+  const int margin = screenEditorMarginY() - top;
+  if (margin > 0) renderer.fillRect(0, top, SCREEN_W, margin, false);
+  const int below = top + height - (screenEditorMarginY() + used);
+  if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
 }
 
 static void drawStatusBar() {
-  const ScreenMode& m = kModes[g_mode];
-  renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
-
   char line[96];
-  snprintf(line, sizeof(line), " %s  %s  %s%s%s  [tap: mode | kbd | palette]", m.name,
-           kPalettes[g_palette].name, oskShiftArmed() ? "SHF " : "", oskCtrlArmed() ? "CTL " : "",
-           oskCapsLockOn() ? "CAPS" : "");
-
+  snprintf(line, sizeof(line), " SCR%d %dx%d  %s  %s%s%s", screenEditorGetMode(), screenEditorCols(),
+           screenEditorRows(), kPalettes[g_palette].name, oskShiftArmed() ? "SHF " : "",
+           oskCtrlArmed() ? "CTL " : "", oskCapsLockOn() ? "CAPS" : "");
+  renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
   tft.setTextFont(2);
   tft.setTextColor(renderer.getPalette().ink, renderer.getPalette().paper);
   tft.setTextDatum(TL_DATUM);
   tft.drawString(line, 2, 0);
-}
-
-static void drawTerminal() {
-  const ScreenMode& m = kModes[g_mode];
-  const int rows = termRows();
-  for (int r = 0; r < rows; r++) {
-    const int y = termY() + r * m.cellH;
-    renderer.drawTextOpaque(m.fontId, 0, y, SCREEN_W, m.cellH, 0, y, g_text[r]);
-  }
-  // Whatever is left between the last full row and the keyboard, wiped so a
-  // mode change never leaves a stripe of the previous cell height behind.
-  const int used = rows * m.cellH;
-  if (termH() > used) {
-    renderer.fillRect(0, termY() + used, SCREEN_W, termH() - used, false);
-  }
-}
-
-static void drawCursor(const bool on) {
-  const ScreenMode& m = kModes[g_mode];
-  if (g_row >= termRows()) return;
-  renderer.fillRect(g_col * m.cellW, termY() + g_row * m.cellH, m.cellW, m.cellH, on);
 }
 
 static void drawAll() {
@@ -156,72 +153,107 @@ static void drawAll() {
   drawStatusBar();
   drawTerminal();
   if (g_oskVisible) oskDraw();
+  drawCursor(g_cursorOn);
 }
 
-// Scrolls the echo buffer up by one line. A terminal, not a document: what
-// goes off the top is gone.
-static void scrollUp() {
-  for (int r = 0; r + 1 < termRows(); r++) {
-    strncpy(g_text[r], g_text[r + 1], MAX_COLS);
-    g_text[r][MAX_COLS] = '\0';
+// screen_editor.cpp calls this when a running program needs its output on the
+// panel mid-run. Nothing is buffered here, so there is nothing to flush; it
+// stays because the interpreter will call it in milestone 5.
+void screenEditorFlushDisplay() {}
+
+// Trims and upper-cases a logical line into `out`, the way a BASIC reads its
+// input: case-insensitive commands, leading and trailing space ignored.
+static void normaliseLine(const char* in, char* out, const size_t outSize) {
+  while (*in == ' ') in++;
+  size_t n = 0;
+  while (*in && n + 1 < outSize) out[n++] = static_cast<char>(toupper(*in++));
+  while (n > 0 && out[n - 1] == ' ') n--;
+  out[n] = '\0';
+}
+
+// Everything Enter does until there is an interpreter.
+//
+// CLS and SCREEN are here rather than waiting for milestone 5 because they are
+// terminal operations, not language ones: they change this file's state and
+// nothing else. Everything else gets the answer a BASIC gives when it does not
+// understand, which is honest about what is and is not built.
+static void handleEnter() {
+  char raw[MAX_PROGRAM_LINE_LEN];
+  screenEditorGetLogicalLineText(raw, sizeof(raw));
+
+  char cmd[MAX_PROGRAM_LINE_LEN];
+  normaliseLine(raw, cmd, sizeof(cmd));
+
+  if (cmd[0] == '\0') {
+    screenEditorStartNewInputLine();
+  } else if (isdigit(static_cast<unsigned char>(cmd[0]))) {
+    // A numbered line is program text. With no interpreter to store it, the
+    // only thing to do is what a real machine does visually: leave it on the
+    // screen and drop to a fresh input line.
+    screenEditorStartNewInputLine();
+  } else if (strcmp(cmd, "CLS") == 0) {
+    screenEditorReset();
+    screenEditorTermPrintLine("Ok");
+  } else if (strncmp(cmd, "SCREEN ", 7) == 0 && cmd[7] >= '0' && cmd[7] <= '3' && cmd[8] == '\0') {
+    screenEditorSetMode(cmd[7] - '0');
+    applyBand();
+    screenEditorTermPrintLine("Ok");
+  } else {
+    screenEditorClearLogicalLine();
+    screenEditorTermPrintLine("Syntax error");
+    screenEditorTermPrintLine("Ok");
   }
-  g_text[termRows() - 1][0] = '\0';
-  g_row = termRows() - 1;
-  g_col = 0;
+  drawTerminal();
+  drawStatusBar();
 }
 
 static void onOskKey(const uint8_t hid, const uint8_t modifiers) {
-  const ScreenMode& m = kModes[g_mode];
+  const int rowBefore = screenEditorGetCursorRow();
 
-  if (hid == OSK_HID_BACKSPACE) {
-    if (g_col > 0) {
-      g_col--;
-      g_text[g_row][g_col] = '\0';
-    }
-  } else if (hid == OSK_HID_ESCAPE) {
-    clearText();
-    drawTerminal();
-    drawStatusBar();
-    return;
-  } else {
-    const char ch = oskHidToChar(hid, modifiers);
-    if (ch == '\n') {
-      if (g_row + 1 < termRows()) {
-        g_row++;
-      } else {
-        scrollUp();
+  switch (hid) {
+    case OSK_HID_BACKSPACE: screenEditorBackspace(); break;
+    case OSK_HID_LEFT:      screenEditorMoveCursor(0, -1); break;
+    case OSK_HID_RIGHT:     screenEditorMoveCursor(0, 1); break;
+    case HID_KEY_UP:        screenEditorMoveCursor(-1, 0); break;
+    case HID_KEY_DOWN:      screenEditorMoveCursor(1, 0); break;
+    case OSK_HID_ESCAPE:
+      screenEditorReset();
+      drawTerminal();
+      drawCursor(g_cursorOn);
+      return;
+    default: {
+      const char ch = oskHidToChar(hid, modifiers);
+      if (ch == '\n') {
+        handleEnter();
+        drawCursor(g_cursorOn);
+        return;
       }
-      g_col = 0;
-    } else if (ch != 0) {
-      if (g_col >= termCols()) {
-        if (g_row + 1 < termRows()) {
-          g_row++;
-        } else {
-          scrollUp();
-        }
-        g_col = 0;
-      }
-      g_text[g_row][g_col] = ch;
-      g_text[g_row][g_col + 1] = '\0';
-      g_col++;
-    } else {
-      return;  // arrows, Tab and the modifiers themselves: nothing to echo
+      if (ch == 0) return;  // Tab and the modifiers themselves have nothing to insert
+      screenEditorInsertCodepoint(static_cast<uint32_t>(static_cast<unsigned char>(ch)));
+      break;
     }
   }
 
-  // Only the affected row is redrawn, not the screen. This is the path the
-  // real terminal will live on, and it is the one measured at 160us a cell in
-  // milestone 2.
-  const int y = termY() + g_row * m.cellH;
-  renderer.drawTextOpaque(m.fontId, 0, y, SCREEN_W, m.cellH, 0, y, g_text[g_row]);
-  if (hid == OSK_HID_BACKSPACE) drawTerminal();
+  // Typing usually touches one row. It touches two when it wraps onto the next,
+  // and the whole screen when that wrap scrolled, which is the only case worth
+  // repainting everything for.
+  const int rowNow = screenEditorGetCursorRow();
+  if (rowNow == rowBefore) {
+    drawTerminalRow(rowNow);
+  } else if (rowNow == rowBefore + 1) {
+    drawTerminalRow(rowBefore);
+    drawTerminalRow(rowNow);
+  } else {
+    drawTerminal();
+  }
+  drawCursor(g_cursorOn);
 }
 
 void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 3, touch keyboard ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 4, terminal ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
@@ -232,7 +264,6 @@ void setup() {
   if (prefs.getBytesLength("touchcal") == sizeof(touchCal)) {
     prefs.getBytes("touchcal", touchCal, sizeof(touchCal));
     tft.setTouch(touchCal);
-    Serial.println("touch: calibration loaded from NVS");
   } else {
     Serial.println("touch: NO calibration in NVS, taps will be wrong");
   }
@@ -240,33 +271,34 @@ void setup() {
 
   renderer.setOrientation(TftRenderer::LandscapeCounterClockwise);
   renderer.setPalette(kPalettes[g_palette].palette);
-  renderer.insertFont(FONT_SCREEN_0, EpdFontFamily(&fontUnscii15x30));
-  renderer.insertFont(FONT_SCREEN_1, EpdFontFamily(&fontUnscii12x24));
-  renderer.insertFont(FONT_SCREEN_2, EpdFontFamily(&fontUnscii10x20));
-  renderer.insertFont(FONT_SCREEN_3, EpdFontFamily(&fontUnscii8x16));
+  renderer.insertFont(FONT_SCREEN_MONO_0, EpdFontFamily(&fontUnscii15x30));
+  renderer.insertFont(FONT_SCREEN_MONO_1, EpdFontFamily(&fontUnscii12x24));
+  renderer.insertFont(FONT_SCREEN_MONO_2, EpdFontFamily(&fontUnscii10x20));
+  renderer.insertFont(FONT_SCREEN_MONO_3, EpdFontFamily(&fontUnscii8x16));
   renderer.begin();
 
-  clearText();
-  snprintf(g_text[0], MAX_COLS + 1, "MicroBASIC 0.1");
-  snprintf(g_text[1], MAX_COLS + 1, "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
-  snprintf(g_text[3], MAX_COLS + 1, "Ok");
-  g_row = 4;
-  g_col = 0;
+  applyBand();
+  screenEditorReset();
 
-  // Key labels in the 48-column font, the small Shift hints in the 60-column
-  // one. Both are already loaded for the SCREEN modes, so the keyboard costs
-  // no extra flash. The PaperS3 uses proportional prose fonts here; those are
-  // 2.6MB of headers between them and are milestone 7's problem.
-  oskInit(renderer, FONT_SCREEN_2, FONT_SCREEN_3, 0, SCREEN_H - OSK_H, SCREEN_W, OSK_H, onOskKey);
+  char banner[64];
+  screenEditorTermPrintLine("MicroBASIC 0.1");
+  snprintf(banner, sizeof(banner), "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
+  screenEditorTermPrintLine(banner);
+  screenEditorTermPrintLine("");
+  screenEditorTermPrintLine("Ok");
+
+  oskInit(renderer, FONT_SCREEN_MONO_2, FONT_SCREEN_MONO_3, 0, SCREEN_H - OSK_H, SCREEN_W, OSK_H,
+          onOskKey);
 
   const uint32_t t0 = micros();
   drawAll();
-  Serial.printf("full screen with keyboard: %lu us\n", static_cast<unsigned long>(micros() - t0));
+  Serial.printf("first paint: %lu us\n", static_cast<unsigned long>(micros() - t0));
 
   const uint32_t t1 = micros();
-  oskDraw();
-  Serial.printf("keyboard alone: %lu us\n", static_cast<unsigned long>(micros() - t1));
-  Serial.printf("terminal while typing: %d rows of %d cols | heap %u KB\n", termRows(), termCols(),
+  drawTerminalRow(0);
+  Serial.printf("one terminal row: %lu us\n", static_cast<unsigned long>(micros() - t1));
+  Serial.printf("terminal: %d cols x %d rows (keyboard %s) | heap %u KB\n", screenEditorCols(),
+                screenEditorRows(), g_oskVisible ? "up" : "down",
                 static_cast<unsigned>(ESP.getFreeHeap() / 1024));
 }
 
@@ -274,25 +306,17 @@ void loop() {
   uint16_t x = 0, y = 0;
   if (tft.getTouch(&x, &y)) {
     if (y < STATUS_BAR_H + 8) {
-      // The status bar carries the demo's own controls, so the keyboard keeps
-      // the whole area it is drawn in.
       if (x < SCREEN_W / 3) {
-        g_mode = (g_mode + 1) % kModeCount;
-        if (g_row >= termRows()) g_row = termRows() - 1;
+        screenEditorSetMode((screenEditorGetMode() + 1) % 4);
+        applyBand();
       } else if (x < 2 * SCREEN_W / 3) {
         g_oskVisible = !g_oskVisible;
-        if (g_row >= termRows()) g_row = termRows() - 1;
       } else {
         g_palette = (g_palette + 1) % kPaletteCount;
         renderer.setPalette(kPalettes[g_palette].palette);
       }
       drawAll();
     } else if (g_oskVisible) {
-      // Redrawing the keyboard costs 49ms, so it happens only when the
-      // keyboard actually looks different: a modifier being armed, or a
-      // one-shot Shift clearing itself on the next character. A plain
-      // keystroke changed one row of text and nothing else, and the callback
-      // already drew that.
       const bool shiftWas = oskShiftArmed();
       const bool ctrlWas = oskCtrlArmed();
       const bool capsWas = oskCapsLockOn();
@@ -303,18 +327,15 @@ void loop() {
         }
       }
     }
-    // Long enough that one press is one keystroke on a resistive panel, which
-    // chatters far more than the capacitive one on the PaperS3.
     delay(220);
     return;
   }
 
   static uint32_t lastBlink = 0;
-  static bool cursorOn = true;
   if (millis() - lastBlink > 500) {
     lastBlink = millis();
-    cursorOn = !cursorOn;
-    drawCursor(cursorOn);
+    g_cursorOn = !g_cursorOn;
+    drawCursor(g_cursorOn);
   }
   delay(10);
 }

@@ -377,3 +377,48 @@ that was silently wrong rather than visibly broken, and it was wrong because it
 was absolute where it should have been proportional. There are probably others.
 Anything in the ported sources expressed in pixels rather than in a ratio of
 something is a candidate.
+
+## 2026-08-31 -- Milestone 4: the real terminal, and a policy decision reversed
+
+`screen_editor.cpp` and `config.h` are ported. The character grid, the
+scrolling, and the continuation-chain logical-line tracking (the thing that
+makes "LIST, arrow up onto a wrapped line, edit in place, Enter" read the whole
+line) came over with no changes at all.
+
+The one real change is that the row count and the centring margin are derived
+from a band the caller sets, instead of being two more columns of the per-mode
+table. The PaperS3 stores both, and its numbers are measurements of a 960x540
+panel with a 30px status bar. Correct there, meaningless anywhere else, and
+silently wrong if either moves, which is the same shape of problem as the
+keycap inset two entries ago.
+
+**The policy on that band was decided, then reversed, and the reversal is the
+right call.** The first implementation had the band shrink when the on-screen
+keyboard came up: 19 rows folded away, 7 with it open, content scrolling to
+keep the cursor visible. The reasoning was that on this device the keyboard is
+the only way in, so drawing rows behind it would leave the cursor hidden, since
+a terminal's cursor lives at the bottom of the used area.
+
+That reasoning was wrong about the premise, not the logic. The plan for this
+device includes a physical keyboard, the same as the PaperS3, with the
+on-screen one as the fallback it is there. So the band is the whole area below
+the status bar, always, and the keyboard is painted over the bottom of the grid.
+
+The mechanism stayed even though the policy changed, and it earns its place:
+it is what makes a SCREEN mode change safe (the row count changes with the cell
+height), it replaces the hardcoded margins, and making the band follow the
+keyboard again is one line in `applyBand()` if the on-screen keyboard ever
+becomes the normal way in.
+
+Hiding the keyboard reveals everything that was behind it. The grid is never
+truncated, only covered.
+
+Timings: one terminal row of 60 columns at 8x16 is 3.7ms, and the first full
+paint with the keyboard up is 143ms, against 99ms when the grid only drew the
+7 visible rows. About 44ms of that is rows composed, pushed, and immediately
+covered by the keyboard. Skipping them while the keyboard is up would return it
+and costs one condition in the row loop.
+
+Enter handles CLS and SCREEN, because those are terminal operations rather than
+language ones, and answers anything else the way a BASIC does when it does not
+understand. Milestone 5 replaces that with the interpreter.

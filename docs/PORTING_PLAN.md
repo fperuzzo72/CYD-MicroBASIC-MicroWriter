@@ -84,6 +84,8 @@ Measured on the board, 80MHz SPI, 480x304 terminal band.
 | One cell rewritten | 240 us |
 | Full-band `fillRect` alone | 30 ms |
 | On-screen keyboard, all six rows | 37 ms |
+| One terminal row, 60 cols at 8x16 | 3.7 ms |
+| First paint, terminal and keyboard | 143 ms |
 | Full screen, terminal and keyboard | 91 ms |
 
 The 30ms is the hardware floor: 480x304 pixels at 16bpp over 80MHz SPI is
@@ -131,10 +133,10 @@ the rest live on the SD card through the `SdCardFont` path that already
 exists, or they all move to the card. That decision belongs to the MicroWriter
 milestone, not before.
 
-The other risk is WiFi and NimBLE in the same binary on a classic ESP32. If
-that turns out not to fit, the on-screen keyboard becomes the only input
-method, which on a touch panel is a defensible machine rather than a
-compromise. Measure before deciding.
+The other risk is WiFi and NimBLE in the same binary on a classic ESP32, and it
+is now the sharper of the two. The intent for this device is a physical
+keyboard with the on-screen one as fallback, so BLE is not the thing that gives
+way if the two do not fit together. Measure before milestone 8, not after.
 
 ## Milestones
 
@@ -162,7 +164,15 @@ compiling.
    the size the dual-legend Shift hint landed on the corner curve. Squaring them
    also cut the keyboard's draw time by a third, because a filled rectangle is
    one block where a rounded one is four arcs walked pixel by pixel.
-4. **Terminal.** `screen_editor.cpp` and the geometry half of `config.h`.
+4. **Terminal.** **Done.** `screen_editor.cpp` and `config.h` are ported. The
+   character grid, its scrolling and the continuation-chain logical-line
+   tracking all came over unchanged; the one real change is that the row count
+   and centring margin are derived from a band the caller sets, rather than
+   being two more columns of the per-mode table. The PaperS3 stores both, and
+   its numbers are measurements of a 960x540 panel with a 30px bar: correct
+   there, meaningless anywhere else. Enter handles CLS and SCREEN, which are
+   terminal operations rather than language ones, and answers anything else the
+   way a BASIC does when it does not understand.
 5. **Interpreter.** `patches/tinybasic/fetch.sh`, then `tb_bridge.cpp`,
    `tb_runtime.cpp`, `terminal_input.cpp`. At this point it is MicroBASIC.
 6. **Storage.** `file_manager.cpp`, `file_browser.cpp`, and `sd_datetime.cpp`
@@ -171,7 +181,12 @@ compiling.
    real second machine rather than the same binary with a flag.
 8. **Network.** `wifi_sync.cpp` and `web_files_page.h`. Measure the binary
    here; this is where the flash budget gets tested.
-9. **BLE keyboard.** `BleKeyboardHost` and NimBLE, if milestone 8 leaves room.
+9. **BLE keyboard.** `BleKeyboardHost` and NimBLE. No longer conditional on
+   milestone 8 leaving room: the plan for this device is a physical keyboard
+   with the on-screen one as fallback, the same shape as the PaperS3. That
+   makes it a requirement rather than a nice-to-have, and it moves the flash
+   question from "does BLE fit" to "what gives way if WiFi and BLE together do
+   not". Worth measuring before milestone 8 rather than after.
 
 ## What is not coming across
 

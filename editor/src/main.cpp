@@ -737,6 +737,23 @@ static void drawCurrentScreen() {
 
 static void drawBand() { drawCurrentScreen(); }
 
+// Whether the character-grid terminal is the screen in front. Everything that
+// draws terminal furniture -- the block cursor, and the row repaint that erases
+// it -- has to ask this first.
+//
+// It exists because asking it twice produced two different answers. The cursor
+// blink checked only isBrowserActive(), so with the sync screen up it kept
+// blinking a block onto it, and worse, erasing that block repaints a whole
+// terminal row: the IP address a sync is useless without was being wiped by a
+// line of the screen behind it, twice a second.
+static bool terminalIsShowing() {
+#if MICROWRITER
+  return false;  // there is no terminal on this machine
+#else
+  return !isWifiSyncActive() && !isBrowserActive();
+#endif
+}
+
 // The paint chain. Its order and the key-routing chain in loop() must match:
 // the PaperS3 records that they disagreed once, and nothing noticed until
 // MicroWriter, where the browser is always open, so a screen drew but could
@@ -749,7 +766,7 @@ static void drawAll() {
 #if !MICROWRITER
   // Only the terminal has a blinking block cursor; the editor draws its own
   // caret and the sync screens have none.
-  if (!isWifiSyncActive() && !isBrowserActive()) drawCursor(g_cursorOn);
+  if (terminalIsShowing()) drawCursor(g_cursorOn);
 #endif
 }
 
@@ -1193,9 +1210,9 @@ void loop() {
   }
 
 #if !MICROWRITER
-  if (isBrowserActive()) {
+  if (!terminalIsShowing()) {
     delay(10);
-    return;  // the browser draws its own caret; no terminal cursor to blink
+    return;  // whatever is in front draws its own caret, or none
   }
 
   static uint32_t lastBlink = 0;

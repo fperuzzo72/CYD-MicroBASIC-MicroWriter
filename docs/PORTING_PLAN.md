@@ -141,7 +141,10 @@ they do not, WiFi is what goes. A BASIC computer you cannot type on is not one;
 one you cannot sync over the network is a BASIC computer with a memory card,
 which is what every machine this one imitates actually was.
 
-**Measured, and the constraint turned out to be somewhere else.** BLE costs
+**Measured, and neither constraint bound. Kept below as written, because being
+wrong about this shaped the milestone order and that is worth remembering.
+
+Measured, and the constraint turned out to be somewhere else.** BLE costs
 296764 bytes of flash and about 145KB of heap. Flash is not the problem: the
 build sits at 791793 of 3211264, leaving 2.4MB, and a WiFi stack with a web
 server is 400-600KB. Both fit with room to spare.
@@ -237,8 +240,17 @@ compiling.
    |---|---|---|
    | MicroBASIC | 495029 of 3211264 | 75036 of 327680 |
    | MicroWriter | 441833 of 3211264 | 48792 of 327680 |
-8. **Network.** `wifi_sync.cpp` and `web_files_page.h`. Measure the binary
-   here; this is where the flash budget gets tested.
+8. **Network.** **Done.** `wifi_sync.cpp`, `web_files_page.h` and `sd_backup.h`
+   ported, with the same SdFat-to-Arduino-SD substitution the storage files
+   needed. Sync verified in both directions on the board, and a program uploaded
+   over WiFi runs.
+
+   The mDNS name follows the machine: `microbasic-cyd.local` or
+   `microwriter-cyd.local`.
+
+   **Both radios fit.** NimBLE and WiFi run at once inside the heap left over,
+   with the keyboard live while the HTTP server serves. The contingency of
+   stopping BLE for the duration of a sync is not needed.
 9. **BLE keyboard.** **Ported and running**, out of plan order because it was
    the expensive question. `BleKeyboardHost` came across from freeink-sdk with
    one substitution: its `BoardConfig.h` include, which supplied four build

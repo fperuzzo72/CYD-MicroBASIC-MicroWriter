@@ -979,3 +979,43 @@ WiFi costs 425KB of flash, and the build sits at 39.8% of the partition. The
 95KB is with the WiFi stack compiled in but not started: `WiFi.begin()` has not
 run. Whether it comes up alongside NimBLE in what is left is the question this
 milestone exists to answer, and it is a runtime one.
+
+## 2026-08-31 -- Milestone 8 closes, and both radios turn out to fit
+
+Sync works in both directions, and `pacman.bas` uploaded over WiFi runs on the
+machine. That is the whole port exercised in one action: a file crossing the
+network, landing on the card, being read by the interpreter, drawn through the
+render layer and driven from the keyboard.
+
+**The question this milestone existed to answer is answered, and the answer is
+that there was no problem.** NimBLE and WiFi run at the same time inside the
+95KB of heap left after both are linked: the BLE keyboard kept working while
+the HTTP server served a file. The contingency written down two entries ago,
+bringing the BLE stack down for the duration of a sync and back afterwards,
+does not need to exist.
+
+Worth saying plainly, because the flash ceiling shaped this plan from the first
+day: **the 4MB that looked like the dominant constraint never bound anything.**
+The finished firmware is 1278641 bytes, 39.8% of its partition. The priority
+decision about which of WiFi and the keyboard would give way was never called
+on. Being wrong about that cost nothing here, but it did shape the milestone
+order, and measuring earlier would have been cheap.
+
+**Two bugs found by using it, both the same shape as several before.**
+
+The mDNS hostname was still `microbasic-papers3`, and the interesting part is
+that it *worked*. Because it answered, nothing forced it to be noticed, and the
+address that answered was the one nobody on this device would guess. It follows
+the machine now: `microbasic-cyd` or `microwriter-cyd`.
+
+The cursor blink asked whether the terminal was in front by testing
+`isBrowserActive()` alone. With the sync screen up it kept blinking a block
+onto it, and erasing that block calls `drawTerminalRow()`, which repaints a
+whole terminal row: the IP address a sync is useless without was being wiped by
+a line of the screen behind it, twice a second. Three places were asking that
+question and giving different answers, so it is one function now,
+`terminalIsShowing()`.
+
+That is the fourth time on this port that the same fix has applied: a condition
+or a chain written out in more than one place drifted, and factoring it into one
+function was both the bug fix and the guard against the next one.

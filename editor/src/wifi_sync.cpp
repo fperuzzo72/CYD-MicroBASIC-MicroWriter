@@ -854,7 +854,15 @@ static void startHttpServer() {
   server->on("/delete", HTTP_POST, handleDeleteFile);
   server->onNotFound(handleNotFound);
   server->begin();
-  MDNS.begin("microbasic-papers3");
+  // Named after the machine and the board, not the PaperS3 this came from. The
+  // old name was still here after the port and worked, which is the problem
+  // with it: it answered, so nothing forced it to be noticed, and the address
+  // that works is the one nobody would guess.
+#if MICROWRITER
+  MDNS.begin("microwriter-cyd");
+#else
+  MDNS.begin("microbasic-cyd");
+#endif
   Serial.printf("[wifi] HTTP server at %s heap=%u largest=%u\n", WiFi.localIP().toString().c_str(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));

@@ -76,8 +76,15 @@ network milestone has to work within.
 Pairing, typing, and loading, editing and creating programs from a real BLE
 keyboard are all verified on the board.
 
-Still to come: the network (milestone 8), which has to work inside the 121KB of
-heap the BLE stack leaves. The PaperS3 sources sit verbatim in
+Milestone 8, the network, is **done**. Sync works in both directions over WiFi,
+the machine answers at `microbasic-cyd.local`, and a program uploaded from a
+computer runs on the device. NimBLE and WiFi run at the same time with the
+keyboard live while the server serves.
+
+**All nine milestones are done**, every one verified on the board rather than in
+a build. The firmware is 1278641 bytes of a 3211264-byte partition, 39.8%: the
+4MB ceiling that looked like the dominant constraint when this started never
+bound anything. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
 

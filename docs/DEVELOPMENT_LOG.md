@@ -519,3 +519,52 @@ folded away. That is the accepted consequence of drawing the full grid, which
 is right once a physical keyboard is the normal way in, and awkward until
 milestone 9 makes that true. `applyBand()` is still one line from making the
 band follow the keyboard if the wait proves annoying.
+
+## 2026-08-31 -- Esc could not stop a program, and the hook to fix it was stubbed out
+
+`RUN` on a `20 GOTO 10` could not be stopped. Esc did nothing, and the keyboard
+looked frozen for as long as the program ran, which was forever.
+
+The cause was a stub written two commits earlier. `tb_runtime.cpp`'s `byield()`
+calls `pumpPhysicalButtonsForProgram()` every sixteen statements, and the
+comment right above that call says exactly why it exists:
+
+> The d-pad only reaches a running program through here: loop() is blocked
+> inside the interpreter for the whole run.
+
+It was stubbed as a permanent no-op on the reasoning that a board with no
+buttons has no buttons to pump. That is true about buttons and wrong about the
+hook. Its job is not "read the d-pad", it is "get input to a running program",
+and on this device the input device is the panel. With it empty, nothing polled
+the touchscreen during a run, so Esc never reached the queue, `checkch()` never
+saw a break, and the machine kept drawing and printing while being unstoppable.
+
+Now it polls the panel and dispatches to the keyboard, which enqueues exactly
+as `loop()` would. Throttled to 25ms rather than run on every call, because
+`byield()` reaches it hundreds of times a second and a touch read is an SPI
+transaction; 25ms is far faster than a finger and the same interval debounces
+the resistive panel.
+
+Worth generalising: the three stubs still standing (`SYNC`, `EDITOR`, and the
+two PaperS3-only commands) were checked again after this. Those are genuinely
+unbuilt features, and they announce themselves on screen rather than doing
+nothing. This one was different in kind: a hook the ported code depends on for
+correctness, emptied because its name described the X4's hardware rather than
+its purpose. A stub is safe when it stands for a feature and dangerous when it
+stands for a mechanism.
+
+## 2026-08-31 -- The band follows the keyboard after all
+
+Reversed again, and this time from use rather than from reasoning. The full
+grid is right once a physical keyboard is the normal way in, but there is no
+physical keyboard yet, so in practice every line typed past the seventh went to
+a row that existed, held text, and could not be seen. Nineteen rows of which
+twelve are blind is worse than seven that all work.
+
+The mechanism was kept through the previous reversal precisely so this would be
+one line, and it was. Folding the keyboard away repaints everything and the
+terminal returns to nineteen rows; folding it in scrolls the content so the
+cursor survives, which `screenEditorSetBand` already did.
+
+Revisit at milestone 9. This is a decision about which input device is normal,
+not about the panel, and it changes when that does.

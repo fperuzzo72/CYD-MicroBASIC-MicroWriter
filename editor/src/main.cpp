@@ -107,10 +107,20 @@ static int codepointToUtf8(uint32_t cp, char* out) {
   return 3;
 }
 
-// The terminal owns everything below the status bar, whether or not the
-// keyboard is drawn over part of it. See the note at the top of this file.
+// The terminal owns what the keyboard leaves it.
+//
+// The alternative, which this had for one milestone, is to give the terminal
+// the whole area and paint the keyboard over the bottom of it. That is what the
+// PaperS3 does and it is right there, where the on-screen keyboard appears only
+// when no BLE keyboard is paired. Here there is no BLE keyboard yet, so every
+// line typed past the seventh went to a row that existed, held text, and could
+// not be seen. Nineteen rows of which twelve are blind is worse than seven that
+// all work.
+//
+// Revisit when milestone 9 lands: once a physical keyboard is the normal way
+// in, the full grid becomes the better default again and this is one line.
 static void applyBand() {
-  screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H);
+  screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0));
 }
 
 static int oskTopY() { return SCREEN_H - OSK_H; }
@@ -174,14 +184,12 @@ static void drawTerminal() {
   // row's own rectangle and would otherwise keep whatever the previous SCREEN
   // mode left there.
   const int top = STATUS_BAR_H;
-  const int height = SCREEN_H - STATUS_BAR_H;
+  const int height = SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0);
   const int used = rows * screenEditorCellH();
   const int margin = screenEditorMarginY() - top;
   if (margin > 0) renderer.fillRect(0, top, SCREEN_W, margin, false);
-  if (!g_oskVisible) {
-    const int below = top + height - (screenEditorMarginY() + used);
-    if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
-  }
+  const int below = top + height - (screenEditorMarginY() + used);
+  if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
 }
 
 static void drawStatusBar() {
@@ -222,12 +230,41 @@ void screenEditorFlushDisplay() {
 // silence: a MENU command that does nothing looks like a bug, and one that says
 // what is missing is a to-do list you can read from the machine itself.
 
-// This board has no physical buttons. Not "none wired up yet": the FNK0103N has
-// a reset and a boot button on the back and nothing on the front, where the X4
-// has a d-pad and the PaperS3 has a power key. These two are permanent no-ops
-// rather than milestones, which is why they say so instead of printing.
+// This board has no front panel buttons: a reset and a boot button on the back,
+// where the X4 has a d-pad and the PaperS3 has a power key. Nothing to rearm.
 void physicalButtonsRearm() {}
-void pumpPhysicalButtonsForProgram() {}
+
+// Called by the runtime's byield() every sixteen statements while a program
+// runs. Named for the d-pad it pumps on the X4, but its real job is the one
+// thing loop() cannot do during a RUN: get input to a running program.
+//
+// loop() is blocked inside the interpreter for the entire run, so nothing else
+// polls the panel. Without this, Esc never reaches the queue, BREAK never
+// fires, and an endless program is endless: the machine still draws, still
+// prints, and cannot be stopped. Which is exactly what a `20 GOTO 10` did
+// before this existed, because it was stubbed out as a no-op on the reasoning
+// that a board with no buttons has no buttons to pump. True about buttons,
+// wrong about the hook.
+//
+// Throttled by time rather than run on every call: byield() reaches here
+// hundreds of times a second and a touch read is an SPI transaction. 25ms is
+// far faster than a finger and costs the program almost nothing. The same
+// interval also debounces, which a resistive panel needs.
+void pumpPhysicalButtonsForProgram() {
+  if (!g_oskVisible) return;
+  static uint32_t lastPoll = 0;
+  const uint32_t now = millis();
+  if (now - lastPoll < 25) return;
+  lastPoll = now;
+
+  uint16_t x = 0, y = 0;
+  if (!tft.getTouch(&x, &y)) return;
+
+  static uint32_t lastTap = 0;
+  if (now - lastTap < 220) return;
+  lastTap = now;
+  oskHandleTap(x, y);  // enqueues through onOskKey, which is all a break needs
+}
 
 static void notBuiltYet(const char* what) {
   char msg[64];
@@ -339,6 +376,11 @@ void loop() {
         applyBand();
       } else if (x < 2 * SCREEN_W / 3) {
         g_oskVisible = !g_oskVisible;
+        // The terminal's row count changes with it, and shrinking scrolls the
+        // content so the cursor survives. drawAll() below repaints everything,
+        // which is what folding the keyboard away has to do anyway: the rows it
+        // was covering have never been drawn.
+        applyBand();
       } else {
         g_palette = (g_palette + 1) % kPaletteCount;
         renderer.setPalette(kPalettes[g_palette].palette);

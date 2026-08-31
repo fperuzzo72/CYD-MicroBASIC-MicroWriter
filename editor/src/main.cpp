@@ -66,6 +66,7 @@
 #include "sd_datetime.h"
 #include "text_editor.h"
 #include "tft_renderer.h"
+#include "wifi_sync.h"
 
 #if !MICROWRITER
 #include "screen_editor.h"
@@ -438,7 +439,13 @@ static void drawBarButton(const int index, const char* label, const char* value,
 }
 
 static void drawStatusBar() {
-  renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
+  // No clear first, and that is deliberate. The nameplate and the buttons tile
+  // the bar exactly (TITLE_W is defined as SCREEN_W minus the button widths, so
+  // the cells always sum to the full width, MicroWriter's zero-width entries
+  // included), and every cell fills its own rectangle before drawing into it.
+  // Clearing first would be a second pass over pixels that are about to be
+  // painted anyway, which is precisely what made the bar flash on every
+  // keystroke. Same fix as the band, in the one place it had been missed.
 
   // The nameplate is drawn as a bar cell like the buttons, so the whole strip
   // is framed and reads as one thing. What the machine is on top, which board
@@ -457,7 +464,7 @@ static void drawStatusBar() {
   drawBarButton(BTN_SCR, "SCR", scr, false);
   drawBarButton(BTN_COLOR, "COLOR", kPalettes[g_palette].name, false);
   drawBarButton(BTN_EDIT, "EDITOR", "--", false);
-  drawBarButton(BTN_SYNC, "SYNC", "--", false);
+  drawBarButton(BTN_SYNC, "SYNC", isWifiSyncActive() ? "on" : "--", isWifiSyncActive());
   drawBarButton(BTN_KBD, "KBD", g_oskVisible ? "on" : "off", g_oskVisible);
   const char* bleValue = BleHid.isConnected()   ? "on"
                          : BleHid.isScanning()  ? "scan"
@@ -566,6 +573,87 @@ static void drawCentered(const char* line1, const char* line2) {
   }
 }
 
+// --- The sync screens ------------------------------------------------------
+//
+// wifi_sync.cpp holds the state machine and the web server; these draw it.
+// Ported from the PaperS3's own, with the fonts swapped and the band taken from
+// this panel.
+
+static void drawNetworkList() {
+  const int rowH = renderer.getLineHeight(FONT_LIST) + 4;
+  const int rows = viewBandH() / rowH;
+  const int count = getNetworkCount();
+  const int sel = getSelectedNetwork();
+
+  if (count == 0) {
+    const char* msg = getSyncStatusText();
+    drawCentered(msg[0] ? msg : "No networks found", "Esc to cancel");
+    return;
+  }
+
+  static int scrollTop = 0;
+  if (sel < scrollTop) scrollTop = sel;
+  if (sel >= scrollTop + rows) scrollTop = sel - rows + 1;
+  if (scrollTop > count - rows) scrollTop = count > rows ? count - rows : 0;
+  if (scrollTop < 0) scrollTop = 0;
+
+  for (int row = 0; row < rows; row++) {
+    const int i = scrollTop + row;
+    const int y = STATUS_BAR_H + row * rowH;
+    const bool selected = (i == sel) && i < count;
+    char line[80];
+    if (i >= count) {
+      line[0] = '\0';
+    } else {
+      snprintf(line, sizeof(line), "%s%s%s", isNetworkSaved(i) ? "[saved] " : "", getNetworkSSID(i),
+               isNetworkEncrypted(i) ? "  (locked)" : "");
+    }
+    const int ty = y + (rowH - renderer.getLineHeight(FONT_LIST)) / 2;
+    renderer.drawTextOpaque(FONT_LIST, 0, y, SCREEN_W, rowH, 8, ty, line, !selected);
+  }
+  const int usedH = rows * rowH;
+  if (viewBandH() > usedH) {
+    renderer.fillRect(0, STATUS_BAR_H + usedH, SCREEN_W, viewBandH() - usedH, false);
+  }
+}
+
+static void drawPasswordEntry() {
+  renderer.fillRect(0, STATUS_BAR_H, SCREEN_W, viewBandH(), false);
+  const int lh = renderer.getLineHeight(FONT_LIST);
+
+  char header[48];
+  snprintf(header, sizeof(header), "Password for %s:", getNetworkSSID(getSelectedNetwork()));
+  renderer.drawText(FONT_LIST, 8, STATUS_BAR_H + 8, header);
+
+  char dots[MAX_FILENAME_LEN];
+  const int n = getPasswordLen();
+  const int shown = n < static_cast<int>(sizeof(dots)) - 1 ? n : static_cast<int>(sizeof(dots)) - 1;
+  for (int i = 0; i < shown; i++) dots[i] = '*';
+  dots[shown] = '\0';
+  renderer.drawText(FONT_LIST, 8, STATUS_BAR_H + 8 + lh + 8,
+                    dots[0] ? dots : "(type it, Enter when done)");
+}
+
+static void drawWifiUi() {
+  switch (getSyncState()) {
+    case SyncState::SCANNING:       drawCentered("Scanning for networks...", nullptr); break;
+    case SyncState::NETWORK_LIST:   drawNetworkList(); break;
+    case SyncState::PASSWORD_ENTRY: drawPasswordEntry(); break;
+    case SyncState::CONNECTING:     drawCentered(getSyncStatusText(), "Esc to cancel"); break;
+    case SyncState::SYNCING: {
+      char line2[64];
+      snprintf(line2, sizeof(line2), "Sent: %d  Received: %d  %s", getSyncFilesSent(),
+               getSyncFilesReceived(), isPcConnected() ? "(connected)" : "");
+      drawCentered(getSyncStatusText(), line2);
+      break;
+    }
+    case SyncState::DONE:           drawCentered(getSyncStatusText(), "Returning..."); break;
+    case SyncState::CONNECT_FAILED: drawCentered(getSyncStatusText(), "Enter to retry, Esc to cancel"); break;
+    case SyncState::SAVE_PROMPT:    drawCentered("Save this password?", "Up = Yes    Down = No"); break;
+    case SyncState::FORGET_PROMPT:  drawCentered("Forget the saved password?", "Up = Yes    Down = No"); break;
+  }
+}
+
 static void drawBrowserUi() {
   if (getBrowserState() == BrowserState::EDIT) {
     drawEditorUi();
@@ -623,9 +711,21 @@ static void drawBrowserUi() {
 // This is what a keystroke uses. drawAll() below is for when the LAYOUT
 // changed -- the keyboard folding, the palette, the SCREEN mode -- where the
 // keyboard and the gaps between its keys really do have to be repainted.
-static void drawBand() {
+// THE one place that decides which screen is showing.
+//
+// This used to be written out in drawBand() and again in drawAll(), and the
+// key-routing chain in loop() makes a third. The PaperS3 records what that
+// costs: two of its chains disagreed, the browser first in one and second in
+// the other, and SYNC drew but could not be typed into. Two of the three are
+// now the same function and cannot drift; the third still has to be kept in
+// step by hand, and says so where it is.
+static void drawCurrentScreen() {
+  if (isWifiSyncActive()) {
+    drawWifiUi();
+    return;
+  }
 #if MICROWRITER
-  drawBrowserUi();  // the only screen this machine has
+  drawBrowserUi();  // the only other screen this machine has
 #else
   if (isBrowserActive()) {
     drawBrowserUi();
@@ -635,6 +735,8 @@ static void drawBand() {
 #endif
 }
 
+static void drawBand() { drawCurrentScreen(); }
+
 // The paint chain. Its order and the key-routing chain in loop() must match:
 // the PaperS3 records that they disagreed once, and nothing noticed until
 // MicroWriter, where the browser is always open, so a screen drew but could
@@ -642,17 +744,12 @@ static void drawBand() {
 static void drawAll() {
   renderer.clearScreen();
   drawStatusBar();
-#if MICROWRITER
-  drawBrowserUi();
+  drawCurrentScreen();
   if (g_oskVisible) oskDraw();
-#else
-  if (isBrowserActive()) {
-    drawBrowserUi();
-  } else {
-    drawTerminal();
-  }
-  if (g_oskVisible) oskDraw();
-  if (!isBrowserActive()) drawCursor(g_cursorOn);
+#if !MICROWRITER
+  // Only the terminal has a blinking block cursor; the editor draws its own
+  // caret and the sync screens have none.
+  if (!isWifiSyncActive() && !isBrowserActive()) drawCursor(g_cursorOn);
 #endif
 }
 
@@ -797,7 +894,10 @@ static void notBuiltYet(const char* what) {
 // Milestone 8. See docs/PORTING_PLAN.md, and the flash budget note there:
 // this is the one that may not fit alongside the BLE keyboard, and if it comes
 // to that, this is what gives way.
-void startWifiSyncFromCommand() { notBuiltYet("SYNC"); }
+void startWifiSyncFromCommand() {
+  wifiSyncStart();
+  screenDirty = true;
+}
 
 // The prose editor, reached from the EDITOR button and from the MENU command.
 void startEditorFromCommand() {
@@ -854,7 +954,10 @@ static bool handleBarTap(const int x, const bool duringRun) {
       if (duringRun) return false;
       forceBlePairingNow();
       return true;
-    case BTN_SYNC: if (!duringRun) startWifiSyncFromCommand(); return !duringRun;
+    case BTN_SYNC:
+      if (duringRun) return false;
+      startWifiSyncFromCommand();
+      return true;
     case BTN_EDIT:
       if (duringRun) return false;
       startEditorFromCommand();
@@ -875,7 +978,7 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 9, BLE keyboard ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 8, network ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
@@ -1040,11 +1143,24 @@ void loop() {
     screenDirty = true;
   }
 
-  browserLoop();  // no-op unless the editor is open; drives auto-save
+  wifiSyncLoop();  // no-op unless the sync screen is up; polls scan, link, HTTP
+  browserLoop();   // no-op unless the editor is open; drives auto-save
 
   // Key routing. This chain MUST stay in the same order as drawAll()'s, or
   // keys reach a screen that is not the one on the panel. See the note there.
-  if (isBrowserActive()) {
+  if (isWifiSyncActive()) {
+    uint8_t code, mods;
+    bool pressed;
+    while (dequeueKeyEventForCaller(code, mods, pressed)) {
+      if (pressed) syncHandleKey(code, mods);
+    }
+    if (screenDirty) {
+      screenDirty = false;
+      drawBand();
+      drawStatusBar();
+      return;
+    }
+  } else if (isBrowserActive()) {
     uint8_t code, mods;
     bool pressed;
     while (dequeueKeyEventForCaller(code, mods, pressed)) {

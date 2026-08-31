@@ -939,3 +939,43 @@ from it, naming the three bugs, and stating plainly that an early return here
 disables more than whatever prompted it; and a note at the call site in
 `byield()`, where a reader sees a function named for buttons on a board that
 has none and would otherwise reasonably assume it is dead.
+
+## 2026-08-31 -- The network ports, and the paint chain stops being written three times
+
+`wifi_sync.cpp`, `web_files_page.h` and `sd_backup.h` came across with the same
+SdFat-to-Arduino-SD substitution the other three storage files needed, plus two
+API differences worth naming because they are not the ones already met:
+`FsFile::isOpen()` becomes `if (!f)`, since Arduino's File has an explicit
+operator bool, and `File::name()` returns a full path where `getName()` filled a
+buffer with a bare one. The second matters more than it looks: the sync protocol
+sends names, and a path there would be a name the other end could never match.
+
+`PROGRAM_UPLOAD_MAX_SIZE` went back into `config.h`, the last of the constants
+trimmed at the start and returned alongside the file that reads it.
+
+**The paint chain was written out three times, and now it is written once.** The
+PaperS3 records that two of its chains disagreed, the browser first in one and
+second in the other, and SYNC drew but could not be typed into. Adding a third
+screen here meant editing three places in the same way, which is the shape of
+that bug being set up again. `drawCurrentScreen()` is now the single place that
+decides which screen is showing; `drawBand()` and `drawAll()` both call it. The
+key-routing chain in `loop()` still has to be kept in step by hand and says so
+where it is, but two of the three can no longer drift.
+
+**The status bar was flashing on every keystroke**, and it was the band bug in
+the one place it had been missed: `drawStatusBar()` cleared the whole bar and
+then drew cells that tile it exactly. `TITLE_W` is defined as the width the
+buttons do not take, so the cells always cover the bar, MicroWriter's
+zero-width entries included. The clear was a second pass over pixels about to
+be painted anyway.
+
+| | Flash | Free heap at the prompt |
+|---|---|---|
+| Before BLE | 495029 | 266KB |
+| With BLE | 791793 | 121KB |
+| With BLE and WiFi linked | 1278641 | 95KB |
+
+WiFi costs 425KB of flash, and the build sits at 39.8% of the partition. The
+95KB is with the WiFi stack compiled in but not started: `WiFi.begin()` has not
+run. Whether it comes up alongside NimBLE in what is left is the question this
+milestone exists to answer, and it is a runtime one.

@@ -71,6 +71,12 @@ static constexpr int MAX_LINES = 1024;
 static constexpr unsigned long AUTO_SAVE_IDLE_MS = 10000;   // 10s after the last keystroke
 static constexpr unsigned long AUTO_SAVE_MAX_MS = 120000;   // and every 2min while still typing
 
+// Reject a browser upload bigger than this. Added with wifi_sync.cpp, the file
+// that reads it. Programs are not bounded by any editor buffer the way notes
+// are, only by the interpreter's own memory, but an unbounded upload is still a
+// bad idea on a device this size.
+static constexpr size_t PROGRAM_UPLOAD_MAX_SIZE = 16384;
+
 #define DBG_PRINTF(fmt, ...)  Serial.printf(fmt, ##__VA_ARGS__)
 #define DBG_PRINTLN(s)        Serial.println(s)
 #define DBG_PRINT(s)          Serial.print(s)

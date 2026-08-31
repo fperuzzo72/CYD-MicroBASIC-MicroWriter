@@ -958,8 +958,8 @@ void setup() {
   // no wrapper here; an earlier one duplicated that and did nothing.
   screenEditorReset();
   char banner[64];
-  // 44 of the 60 columns, so it still fits whole in SCREEN 2 (48 col). SCREEN 1
-  // and 0 wrap it, which is what a real machine did too.
+  // 36 columns, so it fits whole in SCREEN 3, 2 and 1 (60, 48 and 40). Only
+  // SCREEN 0, at 32, wraps it, which is what a real machine did too.
   screenEditorTermPrintLine("FSP MicroBASIC 0.1 for CYD FNK0103-N");
   snprintf(banner, sizeof(banner), "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
   screenEditorTermPrintLine(banner);

@@ -118,41 +118,67 @@ static int codepointToUtf8(uint32_t cp, char* out) {
   return 3;
 }
 
-// The terminal owns what the keyboard leaves it.
+// The terminal always owns everything below the status bar, so the grid is
+// always its full height. What the keyboard changes is the WINDOW onto it, not
+// its size.
 //
-// The alternative, which this had for one milestone, is to give the terminal
-// the whole area and paint the keyboard over the bottom of it. That is what the
-// PaperS3 does and it is right there, where the on-screen keyboard appears only
-// when no BLE keyboard is paired. Here there is no BLE keyboard yet, so every
-// line typed past the seventh went to a row that existed, held text, and could
-// not be seen. Nineteen rows of which twelve are blind is worse than seven that
-// all work.
+// This is the third arrangement tried and the first that loses nothing. Giving
+// the terminal the whole area and painting the keyboard over it left the cursor
+// behind the keys. Shrinking the grid to fit kept the cursor visible but threw
+// away the rows that no longer fitted, so folding the keyboard away revealed
+// blank space where the history had been. A window keeps all 18 rows alive,
+// shows the 6 the keyboard leaves room for, and folding it away brings the rest
+// back because they were never gone.
 //
-// Revisit when milestone 9 lands: once a physical keyboard is the normal way
-// in, the full grid becomes the better default again and this is one line.
+// It also stops being a decision about which keyboard is normal. The window
+// works the same whether the on-screen keyboard is the only way in or an
+// occasional visitor next to a BLE one, which is what milestone 9 needs.
 static void applyBand() {
-  screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0));
+  screenEditorSetBand(STATUS_BAR_H, SCREEN_H - STATUS_BAR_H);
 }
 
-static int oskTopY() { return SCREEN_H - OSK_H; }
+// The visible slice of the panel, and how many grid rows fit in it.
+static int viewBandH() { return SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0); }
 
-// Whether a terminal row has any business being drawn.
+static int visibleRows() {
+  int n = viewBandH() / screenEditorCellH();
+  if (n < 1) n = 1;
+  if (n > screenEditorRows()) n = screenEditorRows();
+  return n;
+}
+
+// First grid row shown. Follows the cursor rather than pinning to the bottom:
+// on a fresh screen the cursor is near the top and the window should be too,
+// and once the grid fills this settles on showing the last rows, which is where
+// a terminal's attention is.
+static int viewTopRow() {
+  const int vis = visibleRows();
+  int top = screenEditorGetCursorRow() - vis + 1;
+  const int maxTop = screenEditorRows() - vis;
+  if (top > maxTop) top = maxTop;
+  if (top < 0) top = 0;
+  return top;
+}
+
+// Whatever the visible rows do not divide evenly, split above and below. Not
+// screenEditorMarginY(), which centres the WHOLE grid in the whole band and is
+// the wrong number whenever the window is smaller than the grid.
+static int viewOriginY() {
+  return STATUS_BAR_H + (viewBandH() - visibleRows() * screenEditorCellH()) / 2;
+}
+
+// Where a grid row lands on the panel, or -1 when it is outside the window.
 //
-// The grid keeps its full height and the keyboard is painted over the bottom of
-// it, so the rows behind the keyboard must not be drawn at all. Drawing them is
-// not merely wasted: it erases the keyboard, which is what happened the moment
-// a keystroke started repainting the whole terminal instead of one row. The
-// keys kept working, because osk.cpp hit-tests coordinates and has no idea it
-// is no longer on screen, so the machine looked like it had lost its keyboard
-// while still responding to it.
-//
-// A row that straddles the keyboard's top edge counts as hidden. Skipping it
-// leaves the keyboard's own top edge showing there, which is right; drawing it
-// would put a stripe of text across the top row of keys.
-static bool rowVisible(const int r) {
-  if (!g_oskVisible) return true;
-  const int top = screenEditorMarginY() + r * screenEditorCellH();
-  return top + screenEditorCellH() <= oskTopY();
+// Rows outside must not be drawn, and not only because it would be wasted: the
+// keyboard is painted below the window, so a row drawn past it erases keys.
+// That is what happened when a keystroke first started repainting the whole
+// terminal. The keys kept working, because osk.cpp hit-tests coordinates and
+// has no idea whether it is still on screen, so the machine looked like it had
+// lost its keyboard while still obeying it.
+static int rowScreenY(const int r) {
+  const int rel = r - viewTopRow();
+  if (rel < 0 || rel >= visibleRows()) return -1;
+  return viewOriginY() + rel * screenEditorCellH();
 }
 
 // One row, composed and pushed in a single transfer. This is the path a
@@ -165,7 +191,8 @@ static void drawTerminalRow(const int r) {
     o += codepointToUtf8(screenEditorGetCell(r, c), utf8Row + o);
   }
   utf8Row[o] = '\0';
-  const int y = screenEditorMarginY() + r * screenEditorCellH();
+  const int y = rowScreenY(r);
+  if (y < 0) return;
   renderer.drawTextOpaque(screenEditorFontId(), 0, y, SCREEN_W, screenEditorCellH(), 0, y, utf8Row);
 }
 
@@ -174,11 +201,11 @@ static void drawCursor(const bool on) {
   // type", and nothing is; on a program that repaints cells in place it reads
   // as a block stuck to whatever it drew last.
   if (tbIsRunning()) return;
-  // And none where the keyboard is: the blink would otherwise punch a hole
+  // And none outside the window: the blink would otherwise punch a hole
   // through the keys twice a second.
-  if (!rowVisible(screenEditorGetCursorRow())) return;
+  const int cy = rowScreenY(screenEditorGetCursorRow());
+  if (cy < 0) return;
   const int cx = screenEditorGetCursorCol() * screenEditorCellW();
-  const int cy = screenEditorMarginY() + screenEditorGetCursorRow() * screenEditorCellH();
   if (on) {
     renderer.fillRect(cx, cy, screenEditorCellW(), screenEditorCellH(), true);
   } else {
@@ -188,19 +215,15 @@ static void drawCursor(const bool on) {
 
 static void drawTerminal() {
   const int rows = screenEditorRows();
-  for (int r = 0; r < rows; r++) {
-    if (rowVisible(r)) drawTerminalRow(r);
-  }
+  for (int r = 0; r < rows; r++) drawTerminalRow(r);  // clips itself to the window
   // The band's centring margin, above and below the rows, is not covered by any
   // row's own rectangle and would otherwise keep whatever the previous SCREEN
   // mode left there.
-  const int top = STATUS_BAR_H;
-  const int height = SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0);
-  const int used = rows * screenEditorCellH();
-  const int margin = screenEditorMarginY() - top;
-  if (margin > 0) renderer.fillRect(0, top, SCREEN_W, margin, false);
-  const int below = top + height - (screenEditorMarginY() + used);
-  if (below > 0) renderer.fillRect(0, screenEditorMarginY() + used, SCREEN_W, below, false);
+  const int used = visibleRows() * screenEditorCellH();
+  const int margin = viewOriginY() - STATUS_BAR_H;
+  if (margin > 0) renderer.fillRect(0, STATUS_BAR_H, SCREEN_W, margin, false);
+  const int below = STATUS_BAR_H + viewBandH() - (viewOriginY() + used);
+  if (below > 0) renderer.fillRect(0, viewOriginY() + used, SCREEN_W, below, false);
 }
 
 // --- Status bar -----------------------------------------------------------
@@ -235,14 +258,21 @@ static void drawBarButton(const int index, const char* label, const char* value,
   renderer.fillRect(x, 0, BTN_W, STATUS_BAR_H, active);
   renderer.drawRect(x + inset, inset, BTN_W - 2 * inset, STATUS_BAR_H - 2 * inset, !active);
 
-  // Label above, value below, both in the 8x16 cell so two lines fit the bar
-  // exactly. Drawn in the opposite state to the fill so an active button reads
-  // as inverted, the same convention the keyboard uses for an armed key.
+  // Label above, value below, both in the 8x16 cell so two lines fit the bar.
+  // Drawn in the opposite state to the fill so an active button reads as
+  // inverted, the same convention the keyboard uses for an armed key.
+  //
+  // The value sits at 14 rather than 16, and the two pixels matter. unscii's
+  // descenders reach row 15 of the 16-row cell with no padding at all (measured
+  // from the font data: g, p, q, y all ink rows 6 to 15), so a value drawn at
+  // 16 puts the tail of "green" and "paper" on row 31, past the button's border
+  // at row 30. At 14 the ink spans rows 16 to 29 and lands exactly inside the
+  // usable area, while capitals only reach row 12, leaving the label clear.
   const int lw = renderer.getTextWidth(FONT_SCREEN_MONO_3, label);
   renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - lw) / 2, 0, label, !active);
   if (value && *value) {
     const int vw = renderer.getTextWidth(FONT_SCREEN_MONO_3, value);
-    renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - vw) / 2, 16, value, !active);
+    renderer.drawText(FONT_SCREEN_MONO_3, x + (BTN_W - vw) / 2, 14, value, !active);
   }
 }
 
@@ -429,12 +459,11 @@ void loop() {
     if (y < STATUS_BAR_H) {
       switch (x / BTN_W) {
         case BTN_KBD:
+          // Only the window changes. The grid keeps all 18 rows either way, so
+          // folding the keyboard away brings back the rows it was hiding
+          // rather than revealing blanks where they used to be. drawAll()
+          // repaints, which it has to: those rows were never drawn.
           g_oskVisible = !g_oskVisible;
-          // The terminal's row count changes with it, and shrinking scrolls
-          // the content so the cursor survives. drawAll() below repaints
-          // everything, which folding the keyboard away has to do anyway: the
-          // rows it was covering have never been drawn.
-          applyBand();
           break;
         case BTN_SCR:
           screenEditorSetMode((screenEditorGetMode() + 1) % 4);

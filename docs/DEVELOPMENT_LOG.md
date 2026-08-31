@@ -644,3 +644,38 @@ Six rows of terminal while typing now, down from seven. That is the number to
 watch: if it gets uncomfortable before milestone 9, the answer is a shorter
 keyboard rather than a shorter bar, because the bar is now the only thing on
 screen that can be pressed on purpose.
+
+## 2026-08-31 -- Descenders measured, and the terminal gets a window instead of a size
+
+**Two pixels, and they were measurable rather than guessable.** The value line
+of each bar button had "green" and "paper" hanging their tails past the button
+border. Reading the ink extents straight out of `unscii_8x16.h` rather than
+eyeballing it: g, p, q and y ink rows 6 to 15 of the 16-row cell, with no
+padding at the bottom at all, while capitals only reach row 12. Drawn at y=16
+inside a 32px bar, a descender lands on row 31 and the border is on row 30.
+Moving the value to y=14 puts its ink at rows 16 to 29, exactly inside the
+usable area, with three clear pixels under the label.
+
+**The terminal band is now a window, and this is the third arrangement.** The
+first gave the terminal the whole panel and painted the keyboard over it, which
+left the cursor behind the keys. The second shrank the grid to what the keyboard
+left, which kept the cursor visible and threw away every row that no longer
+fitted, so folding the keyboard away revealed blank space where the history had
+been.
+
+The third keeps the grid at its full 18 rows always and moves a window over it.
+Six rows show while the keyboard is up, eighteen when it is folded away, and
+nothing is ever discarded because the grid never changes size. The window
+follows the cursor rather than pinning to the bottom, so a fresh screen shows
+its top and a full one shows its end, which is where a terminal's attention is.
+
+The part that makes this the right answer rather than just a better one: it
+stops being a decision about which keyboard is normal. Both earlier
+arrangements had to be re-argued as soon as the premise moved, and both were
+re-argued, twice. A window behaves the same whether the on-screen keyboard is
+the only way in or an occasional visitor beside a BLE one, which is exactly
+what milestone 9 will need without anyone having to remember to change it back.
+
+`screenEditorSetBand` keeps its job, sizing the grid to the panel. What moved
+out of it is the assumption that the grid and the visible area are the same
+rectangle.

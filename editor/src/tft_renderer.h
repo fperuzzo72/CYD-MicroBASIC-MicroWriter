@@ -32,6 +32,14 @@
 // drawText where it slots back in, and getTextWidth would have to learn the
 // same rules on the same day.
 
+// GfxRenderer's colour enum, carried over by name and value so ported code
+// compiles. On e-paper these are Bayer dither densities faked out of pure black
+// and white; here they are real blends between the palette's ink and paper,
+// which is strictly better. osk.cpp's own comment flags the dither keycaps as
+// "visually busier than a real gray keycap would" and asks for a second look on
+// the panel. On this panel there is nothing to look at: they are real greys.
+enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 0x0A, Black = 0x10 };
+
 class TftRenderer {
  public:
   // Kept from GfxRenderer so ported call sites compile untouched, though only
@@ -72,6 +80,11 @@ class TftRenderer {
   // Immediate mode: there is nothing buffered to push. Kept so ported code
   // that calls it every frame does not have to be edited.
   void displayBuffer(int /*refreshMode*/ = 0) const {}
+  // Always false. On e-paper this asks whether a refresh can be started and
+  // overlapped with CPU work; here drawing has already reached the panel by the
+  // time the call returns, so there is nothing to overlap and callers should
+  // take their synchronous path.
+  bool supportsAsyncRefresh() const { return false; }
   void tapToLogical(float nx, float ny, int& outX, int& outY) const;
 
   // --- Drawing ---
@@ -82,6 +95,11 @@ class TftRenderer {
   void fillRect(int x, int y, int width, int height, bool state = true) const;
   void drawRect(int x, int y, int width, int height, bool state = true) const;
   void drawRect(int x, int y, int width, int height, int lineWidth, bool state) const;
+  void fillRoundedRect(int x, int y, int width, int height, int cornerRadius, Color color) const;
+  void drawRoundedRect(int x, int y, int width, int height, int lineWidth, int cornerRadius,
+                       bool state) const;
+  // Resolves one of GfxRenderer's five ink levels against the current palette.
+  uint16_t resolveColor(Color color) const;
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   // Opaque text into a caller-given rectangle: background and glyphs are

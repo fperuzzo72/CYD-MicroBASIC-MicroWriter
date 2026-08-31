@@ -83,6 +83,8 @@ Measured on the board, 80MHz SPI, 480x304 terminal band.
 | Full repaint, 32x10 grid of 15x30 glyphs | 65 ms |
 | One cell rewritten | 240 us |
 | Full-band `fillRect` alone | 30 ms |
+| On-screen keyboard, all six rows | 49 ms |
+| Full screen, terminal and keyboard | 103 ms |
 
 The 30ms is the hardware floor: 480x304 pixels at 16bpp over 80MHz SPI is
 about 29ms of pure transfer, so nothing can clear the band faster than that.
@@ -143,17 +145,20 @@ compiling.
    **Done**, except the SD probe, which needs a card. Panel geometry and touch
    confirmed on the board on 2026-08-31; see docs/HARDWARE.md.
    `editor/src/main.cpp`.
-2. **Render layer.** **Done**, for the two SCREEN modes whose fonts already
-   exist. `editor/src/tft_renderer.{h,cpp}` offers the fifteen `GfxRenderer`
-   methods that `port-staging/src` actually calls, with matching signatures, so
-   ported code compiles against it unchanged. Metrics agree exactly with the
-   grid: 32 columns of the 15x30 font measure 480 pixels, 40 of the 12x24
-   measure 480. Speed is in "The render budget" below.
-3. **Touch and the on-screen keyboard.** Calibration persisted in NVS, mapped
-   into the event shape `osk.cpp` already expects, then `osk.cpp` itself with
-   new key geometry. The pressure here is vertical: a usable QWERTY on a
-   320-pixel-tall screen leaves the terminal about half its rows while the
-   keyboard is up. Expect to redesign, not rescale.
+2. **Render layer.** **Done**, all four SCREEN modes.
+   `editor/src/tft_renderer.{h,cpp}` offers the eighteen `GfxRenderer` methods
+   that `port-staging/src` actually calls, with matching signatures, so ported
+   code compiles against it unchanged. Metrics agree exactly with the grid:
+   every column count measures 480 pixels. Speed is in "The render budget"
+   below.
+3. **Touch and the on-screen keyboard.** **Done.** `osk.cpp` came over with
+   nothing changed but its include and the renderer's type name: its layout was
+   already written in proportional half-units against a caller-given rectangle,
+   so it re-flowed to 480x320 on its own. Six rows at 32 pixels, which leaves
+   **7 terminal rows of 60 columns** while the keyboard is up, against 19 with
+   it folded away. Redrawing the keyboard costs 49ms, so it only happens when
+   it actually looks different, which is a modifier arming or a one-shot Shift
+   clearing itself.
 4. **Terminal.** `screen_editor.cpp` and the geometry half of `config.h`.
 5. **Interpreter.** `patches/tinybasic/fetch.sh`, then `tb_bridge.cpp`,
    `tb_runtime.cpp`, `terminal_input.cpp`. At this point it is MicroBASIC.

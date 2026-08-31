@@ -1,28 +1,22 @@
-// Milestone 2: the render layer, proven on the panel.
+// Milestone 3: touch and the on-screen keyboard.
 //
-// Milestone 1 established that the board works. This establishes that
-// MicroBASIC's own drawing calls can reach it: TftRenderer offers the fifteen
-// GfxRenderer methods that port-staging/src actually calls, and EpdFont's glyph
-// data is blitted straight to the TFT with no framebuffer in between.
+// Milestone 1 proved the board, milestone 2 proved the drawing. This proves
+// input: osk.cpp comes over from the PaperS3 with nothing changed but its
+// include and the renderer's type name, because TftRenderer matches
+// GfxRenderer's signatures. It emits standard USB HID keycodes and a standard
+// modifier bitmask, which is the same wire format input_handler.cpp already
+// expects, so the editor and the interpreter will accept touch input without
+// knowing where it came from.
 //
-// What this proves, and why each part is here:
+// The echo area here is NOT the terminal. screen_editor.cpp is milestone 4;
+// this is forty lines of line buffer whose only job is to show that a tapped
+// key becomes a character on screen. Nothing here should survive into the
+// real thing.
 //
-//   The glyph bit walk is right. A full grid of printable ASCII at two
-//   different cell sizes. The unscii cells are 15 and 12 pixels wide, neither a
-//   multiple of eight, which is exactly the case that comes out sheared if the
-//   bitstream is read as byte-aligned per row. If the characters are legible,
-//   the walk is correct.
-//
-//   The geometry works out. Both grids are drawn to the column and row counts
-//   proposed in docs/PORTING_PLAN.md, so the numbers in that table can be
-//   looked at rather than argued about.
-//
-//   The speed is known. Each full repaint is timed and reported. This is the
-//   number that decides whether the terminal can repaint whole rows or has to
-//   track dirty cells, and it is measured rather than guessed.
-//
-// Tap the left half of the screen to change SCREEN mode, the right half to
-// change palette.
+// The layout question this milestone exists to answer: the keyboard needs six
+// rows and this panel is 320 pixels tall, so how many terminal rows are left
+// while it is up, and are the keys big enough to hit on a resistive panel.
+// Tap the status bar to fold the keyboard away and see the full terminal.
 
 #include <Arduino.h>
 #include <EpdFont.h>
@@ -35,14 +29,13 @@
 #include <builtinFonts/unscii_8x16.h>
 
 #include "board_fnk0103n.h"
+#include "osk.h"
 #include "tft_renderer.h"
 
 static TFT_eSPI tft;
 static TftRenderer renderer(tft);
 static Preferences prefs;
 
-// Font ids are arbitrary sentinels, the same scheme config.h uses on the two
-// earlier devices: they only have to not collide with each other.
 static constexpr int FONT_SCREEN_0 = -2000000001;  // 32 columns
 static constexpr int FONT_SCREEN_1 = -2000000002;  // 40 columns
 static constexpr int FONT_SCREEN_2 = -2000000003;  // 48 columns
@@ -53,11 +46,16 @@ static const EpdFont fontUnscii12x24(&unscii_12x24);
 static const EpdFont fontUnscii10x20(&unscii_10x20);
 static const EpdFont fontUnscii8x16(&unscii_8x16);
 
-// The status bar is one native unscii row tall, so the terminal band below it
-// is 304 pixels. See docs/PORTING_PLAN.md, "Screen geometry".
 static constexpr int STATUS_BAR_H = 16;
-static constexpr int BAND_Y = STATUS_BAR_H;
-static constexpr int BAND_H = SCREEN_H - STATUS_BAR_H;  // 304
+
+// Six rows of keys at 32 pixels each. 32 is the number this milestone is
+// really testing: on a 74mm-wide panel a 2-half-unit key comes out about
+// 4.6mm across, which is fine for a fingernail or a stylus and small for a
+// fingertip. If it turns out to be too small in the hand, the fix is fewer
+// rows (fold Esc and the arrows into a modifier layer), not smaller type.
+static constexpr int OSK_ROWS = 6;
+static constexpr int OSK_ROW_H = 32;
+static constexpr int OSK_H = OSK_ROWS * OSK_ROW_H;  // 192
 
 struct ScreenMode {
   const char* name;
@@ -65,17 +63,13 @@ struct ScreenMode {
   int cellW;
   int cellH;
   int cols;
-  int rows;
 };
 
-// All four, as proposed in docs/PORTING_PLAN.md. Every column count divides
-// 480 exactly. SCREEN 3 is the only one whose rows divide the 304px band
-// exactly too, because its cell is unscii-16 at its own native size.
 static const ScreenMode kModes[] = {
-    {"SCREEN 0  32x10  15x30", FONT_SCREEN_0, 15, 30, 32, BAND_H / 30},
-    {"SCREEN 1  40x12  12x24", FONT_SCREEN_1, 12, 24, 40, BAND_H / 24},
-    {"SCREEN 2  48x15  10x20", FONT_SCREEN_2, 10, 20, 48, BAND_H / 20},
-    {"SCREEN 3  60x19  8x16",  FONT_SCREEN_3,  8, 16, 60, BAND_H / 16},
+    {"SCR0 32c", FONT_SCREEN_0, 15, 30, 32},
+    {"SCR1 40c", FONT_SCREEN_1, 12, 24, 40},
+    {"SCR2 48c", FONT_SCREEN_2, 10, 20, 48},
+    {"SCR3 60c", FONT_SCREEN_3, 8, 16, 60},
 };
 static constexpr int kModeCount = sizeof(kModes) / sizeof(kModes[0]);
 
@@ -91,138 +85,148 @@ static const NamedPalette kPalettes[] = {
 };
 static constexpr int kPaletteCount = sizeof(kPalettes) / sizeof(kPalettes[0]);
 
-// Boots in SCREEN 1, the 40-column mode, because 40 columns is exactly what
-// MSX BASIC's text screen had. Not a coincidence worth engineering around, but
-// a pleasant one.
-static int g_mode = 1;
+// Boots in SCREEN 3, the 60-column mode: the most rows the band will hold, and
+// legible on the panel because unscii-16 is drawn for this cell size rather
+// than resampled down to it. Confirmed by looking at all four on hardware.
+static int g_mode = 3;
 static int g_palette = 0;
-static bool g_showPattern = false;
-static uint32_t g_lastRepaintUs = 0;
-static int g_cursorRow = 0;
-static int g_cursorCol = 0;
+static bool g_oskVisible = true;
 
-// A row of printable ASCII, offset per row so the pattern is not a repeating
-// stripe and every glyph in the font gets drawn somewhere.
-static void fillPatternRow(char* out, const int cols, const int rowIndex) {
-  for (int c = 0; c < cols; c++) {
-    out[c] = static_cast<char>(0x20 + ((c + rowIndex * 7) % 95));
-  }
-  out[cols] = '\0';
+static constexpr int MAX_ROWS = 20;
+static constexpr int MAX_COLS = 64;
+static char g_text[MAX_ROWS][MAX_COLS + 1];
+static int g_row = 0;
+static int g_col = 0;
+
+static int termY() { return STATUS_BAR_H; }
+static int termH() { return SCREEN_H - STATUS_BAR_H - (g_oskVisible ? OSK_H : 0); }
+static int termRows() {
+  const int r = termH() / kModes[g_mode].cellH;
+  return r > MAX_ROWS ? MAX_ROWS : r;
+}
+static int termCols() {
+  const int c = kModes[g_mode].cols;
+  return c > MAX_COLS ? MAX_COLS : c;
+}
+
+static void clearText() {
+  for (int r = 0; r < MAX_ROWS; r++) g_text[r][0] = '\0';
+  g_row = 0;
+  g_col = 0;
 }
 
 static void drawStatusBar() {
   const ScreenMode& m = kModes[g_mode];
-  // Paper background rather than a solid ink bar. On a home micro the screen is
-  // one background colour throughout, and a bright bar across the top breaks
-  // the illusion the palette is there to create. The real status bar, when it
-  // is designed, should decide this on its own terms.
   renderer.fillRect(0, 0, SCREEN_W, STATUS_BAR_H, false);
 
-  char line[80];
-  snprintf(line, sizeof(line), " %s  %s  %s  %lu ms", m.name, kPalettes[g_palette].name,
-           g_showPattern ? "pattern" : "boot", static_cast<unsigned long>(g_lastRepaintUs / 1000));
+  char line[96];
+  snprintf(line, sizeof(line), " %s  %s  %s%s%s  [tap: mode | kbd | palette]", m.name,
+           kPalettes[g_palette].name, oskShiftArmed() ? "SHF " : "", oskCtrlArmed() ? "CTL " : "",
+           oskCapsLockOn() ? "CAPS" : "");
 
-  // The status bar uses a TFT_eSPI built-in font rather than an EpdFont: at 16
-  // pixels tall there is no unscii size that fits yet, and generating one just
-  // for the bar would be work spent before the bar's design is settled.
   tft.setTextFont(2);
   tft.setTextColor(renderer.getPalette().ink, renderer.getPalette().paper);
   tft.setTextDatum(TL_DATUM);
   tft.drawString(line, 2, 0);
 }
 
-// The boot screen, in the shape MSX BASIC used: what the machine is, how much
-// memory is free, a blank line, then Ok and the cursor.
-//
-// The numbers are real, read from this board at this moment, which is the
-// whole point of showing it rather than mocking it up somewhere else.
-static void composeBootLines(char lines[][64], int& count, const ScreenMode& m) {
-  count = 0;
-  snprintf(lines[count++], 64, "MicroBASIC 0.1");
-  if (m.cols >= 40) {
-    snprintf(lines[count++], 64, "Freenove FNK0103N, ESP32, %dx%d", SCREEN_W, SCREEN_H);
-  } else {
-    snprintf(lines[count++], 64, "FNK0103N ESP32 %dx%d", SCREEN_W, SCREEN_H);
-  }
-  snprintf(lines[count++], 64, "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
-  lines[count++][0] = '\0';
-  snprintf(lines[count++], 64, "Ok");
-}
-
-// A row of printable ASCII, offset per row so the pattern is not a repeating
-// stripe and every glyph in the font gets drawn somewhere. This is the glyph
-// correctness test: the unscii cells are 15 and 12 wide, neither a multiple of
-// eight, which is exactly the case that shears if the bitstream is read as
-// byte-aligned per row.
-static void fillPatternRow(char* out, const int cols, const int rowIndex);
-
-static void drawScreen() {
+static void drawTerminal() {
   const ScreenMode& m = kModes[g_mode];
-  char row[128];
-
-  const uint32_t start = micros();
-
-  if (g_showPattern) {
-    for (int r = 0; r < m.rows; r++) {
-      fillPatternRow(row, m.cols, r);
-      const int rowY = BAND_Y + r * m.cellH;
-      renderer.drawTextOpaque(m.fontId, 0, rowY, SCREEN_W, m.cellH, 0, rowY, row);
-    }
-    g_cursorRow = -1;
-  } else {
-    char lines[8][64];
-    int lineCount = 0;
-    composeBootLines(lines, lineCount, m);
-    for (int r = 0; r < m.rows; r++) {
-      const int rowY = BAND_Y + r * m.cellH;
-      const char* text = (r < lineCount) ? lines[r] : "";
-      renderer.drawTextOpaque(m.fontId, 0, rowY, SCREEN_W, m.cellH, 0, rowY, text);
-    }
-    // MSX leaves the cursor on the line after Ok, at column 0.
-    g_cursorRow = lineCount;
-    g_cursorCol = 0;
+  const int rows = termRows();
+  for (int r = 0; r < rows; r++) {
+    const int y = termY() + r * m.cellH;
+    renderer.drawTextOpaque(m.fontId, 0, y, SCREEN_W, m.cellH, 0, y, g_text[r]);
   }
-
-  const uint32_t end = micros();
-  g_lastRepaintUs = end - start;
-
-  const uint32_t cellStart = micros();
-  renderer.drawTextOpaque(m.fontId, 0, BAND_Y, m.cellW, m.cellH, 0, BAND_Y,
-                          g_showPattern ? "A" : "M");
-  const uint32_t cellUs = micros() - cellStart;
-
-  drawStatusBar();
-
-  Serial.printf("%s %s %s | full repaint %lu us (%lu ms) | one cell %lu us\n", m.name,
-                kPalettes[g_palette].name, g_showPattern ? "pattern" : "boot",
-                static_cast<unsigned long>(g_lastRepaintUs),
-                static_cast<unsigned long>(g_lastRepaintUs / 1000),
-                static_cast<unsigned long>(cellUs));
+  // Whatever is left between the last full row and the keyboard, wiped so a
+  // mode change never leaves a stripe of the previous cell height behind.
+  const int used = rows * m.cellH;
+  if (termH() > used) {
+    renderer.fillRect(0, termY() + used, SCREEN_W, termH() - used, false);
+  }
 }
 
-// A solid block, the way a home micro's cursor looked. Cheap enough to blink at
-// any rate we like: one cell is 240us.
 static void drawCursor(const bool on) {
-  if (g_cursorRow < 0) return;
   const ScreenMode& m = kModes[g_mode];
-  if (g_cursorRow >= m.rows) return;
-  renderer.fillRect(g_cursorCol * m.cellW, BAND_Y + g_cursorRow * m.cellH, m.cellW, m.cellH, on);
+  if (g_row >= termRows()) return;
+  renderer.fillRect(g_col * m.cellW, termY() + g_row * m.cellH, m.cellW, m.cellH, on);
+}
+
+static void drawAll() {
+  renderer.clearScreen();
+  drawStatusBar();
+  drawTerminal();
+  if (g_oskVisible) oskDraw();
+}
+
+// Scrolls the echo buffer up by one line. A terminal, not a document: what
+// goes off the top is gone.
+static void scrollUp() {
+  for (int r = 0; r + 1 < termRows(); r++) {
+    strncpy(g_text[r], g_text[r + 1], MAX_COLS);
+    g_text[r][MAX_COLS] = '\0';
+  }
+  g_text[termRows() - 1][0] = '\0';
+  g_row = termRows() - 1;
+  g_col = 0;
+}
+
+static void onOskKey(const uint8_t hid, const uint8_t modifiers) {
+  const ScreenMode& m = kModes[g_mode];
+
+  if (hid == OSK_HID_BACKSPACE) {
+    if (g_col > 0) {
+      g_col--;
+      g_text[g_row][g_col] = '\0';
+    }
+  } else if (hid == OSK_HID_ESCAPE) {
+    clearText();
+    drawTerminal();
+    drawStatusBar();
+    return;
+  } else {
+    const char ch = oskHidToChar(hid, modifiers);
+    if (ch == '\n') {
+      if (g_row + 1 < termRows()) {
+        g_row++;
+      } else {
+        scrollUp();
+      }
+      g_col = 0;
+    } else if (ch != 0) {
+      if (g_col >= termCols()) {
+        if (g_row + 1 < termRows()) {
+          g_row++;
+        } else {
+          scrollUp();
+        }
+        g_col = 0;
+      }
+      g_text[g_row][g_col] = ch;
+      g_text[g_row][g_col + 1] = '\0';
+      g_col++;
+    } else {
+      return;  // arrows, Tab and the modifiers themselves: nothing to echo
+    }
+  }
+
+  // Only the affected row is redrawn, not the screen. This is the path the
+  // real terminal will live on, and it is the one measured at 160us a cell in
+  // milestone 2.
+  const int y = termY() + g_row * m.cellH;
+  renderer.drawTextOpaque(m.fontId, 0, y, SCREEN_W, m.cellH, 0, y, g_text[g_row]);
+  if (hid == OSK_HID_BACKSPACE) drawTerminal();
 }
 
 void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println();
-  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 2, render layer ===");
+  Serial.println("=== CYD MicroBASIC/MicroWriter -- milestone 3, touch keyboard ===");
 
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
-
   tft.init();
 
-  // Touch calibration is whatever milestone 1 stored. If it is missing the
-  // demo still runs; only the tap-to-switch stops working, which is not what
-  // this milestone is proving.
   uint16_t touchCal[5];
   prefs.begin("cyd", true);
   if (prefs.getBytesLength("touchcal") == sizeof(touchCal)) {
@@ -242,42 +246,69 @@ void setup() {
   renderer.insertFont(FONT_SCREEN_3, EpdFontFamily(&fontUnscii8x16));
   renderer.begin();
 
-  // Metrics, printed once. A monospace font should report a text width that is
-  // exactly the column count times the cell width; if it does not, the advance
-  // arithmetic is wrong and every layout built on it would be too.
-  for (int i = 0; i < kModeCount; i++) {
-    char row[128];
-    fillPatternRow(row, kModes[i].cols, 0);
-    Serial.printf("%s -> lineHeight %d (expect %d), width of %d cols %d (expect %d)\n", kModes[i].name,
-                  renderer.getLineHeight(kModes[i].fontId), kModes[i].cellH, kModes[i].cols,
-                  renderer.getTextWidth(kModes[i].fontId, row), kModes[i].cols * kModes[i].cellW);
-  }
-  Serial.printf("heap: %u KB free\n", static_cast<unsigned>(ESP.getFreeHeap() / 1024));
+  clearText();
+  snprintf(g_text[0], MAX_COLS + 1, "MicroBASIC 0.1");
+  snprintf(g_text[1], MAX_COLS + 1, "%u Bytes free", static_cast<unsigned>(ESP.getFreeHeap()));
+  snprintf(g_text[3], MAX_COLS + 1, "Ok");
+  g_row = 4;
+  g_col = 0;
 
-  drawScreen();
+  // Key labels in the 48-column font, the small Shift hints in the 60-column
+  // one. Both are already loaded for the SCREEN modes, so the keyboard costs
+  // no extra flash. The PaperS3 uses proportional prose fonts here; those are
+  // 2.6MB of headers between them and are milestone 7's problem.
+  oskInit(renderer, FONT_SCREEN_2, FONT_SCREEN_3, 0, SCREEN_H - OSK_H, SCREEN_W, OSK_H, onOskKey);
+
+  const uint32_t t0 = micros();
+  drawAll();
+  Serial.printf("full screen with keyboard: %lu us\n", static_cast<unsigned long>(micros() - t0));
+
+  const uint32_t t1 = micros();
+  oskDraw();
+  Serial.printf("keyboard alone: %lu us\n", static_cast<unsigned long>(micros() - t1));
+  Serial.printf("terminal while typing: %d rows of %d cols | heap %u KB\n", termRows(), termCols(),
+                static_cast<unsigned>(ESP.getFreeHeap() / 1024));
 }
 
 void loop() {
-  // Three touch zones across the width: SCREEN mode, content, palette.
   uint16_t x = 0, y = 0;
   if (tft.getTouch(&x, &y)) {
-    if (x < SCREEN_W / 3) {
-      g_mode = (g_mode + 1) % kModeCount;
-    } else if (x < 2 * SCREEN_W / 3) {
-      g_showPattern = !g_showPattern;
-    } else {
-      g_palette = (g_palette + 1) % kPaletteCount;
-      renderer.setPalette(kPalettes[g_palette].palette);
+    if (y < STATUS_BAR_H + 8) {
+      // The status bar carries the demo's own controls, so the keyboard keeps
+      // the whole area it is drawn in.
+      if (x < SCREEN_W / 3) {
+        g_mode = (g_mode + 1) % kModeCount;
+        if (g_row >= termRows()) g_row = termRows() - 1;
+      } else if (x < 2 * SCREEN_W / 3) {
+        g_oskVisible = !g_oskVisible;
+        if (g_row >= termRows()) g_row = termRows() - 1;
+      } else {
+        g_palette = (g_palette + 1) % kPaletteCount;
+        renderer.setPalette(kPalettes[g_palette].palette);
+      }
+      drawAll();
+    } else if (g_oskVisible) {
+      // Redrawing the keyboard costs 49ms, so it happens only when the
+      // keyboard actually looks different: a modifier being armed, or a
+      // one-shot Shift clearing itself on the next character. A plain
+      // keystroke changed one row of text and nothing else, and the callback
+      // already drew that.
+      const bool shiftWas = oskShiftArmed();
+      const bool ctrlWas = oskCtrlArmed();
+      const bool capsWas = oskCapsLockOn();
+      if (oskHandleTap(x, y)) {
+        if (oskShiftArmed() != shiftWas || oskCtrlArmed() != ctrlWas || oskCapsLockOn() != capsWas) {
+          oskDraw();
+          drawStatusBar();
+        }
+      }
     }
-    drawScreen();
-    // Long enough that one press is one change on a resistive panel, which
+    // Long enough that one press is one keystroke on a resistive panel, which
     // chatters far more than the capacitive one on the PaperS3.
-    delay(350);
+    delay(220);
     return;
   }
 
-  // The cursor blink also exercises the single-cell path continuously, which is
-  // the one the terminal will lean on hardest once it exists.
   static uint32_t lastBlink = 0;
   static bool cursorOn = true;
   if (millis() - lastBlink > 500) {

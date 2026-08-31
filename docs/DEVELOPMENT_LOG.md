@@ -255,3 +255,51 @@ half the width would have produced tiers nobody can read. The four are re-cut
 to what 480 divides by.
 
 Flash with all four fonts linked: 356589 bytes of 3211264.
+
+## 2026-08-31 -- Milestone 3, and a correction to the milestone 2 entry
+
+**First the correction.** The milestone 2 entry says `TftRenderer` implements
+the fifteen `GfxRenderer` methods the ported code calls. The count was wrong,
+and so was the method that produced it. The scan used a regex anchored with
+`\b` before `renderer`, which never matches inside `g_renderer` because an
+underscore is a word character, so every call made through a pointer named
+`g_renderer` was invisible to it. `osk.cpp` calls the renderer that way
+throughout.
+
+Redone properly, by extracting the public method names from `GfxRenderer.h`
+and grepping each one against `port-staging/src`, the surface is **eighteen**.
+The three missed were `fillRoundedRect`, `drawRoundedRect` and
+`supportsAsyncRefresh`, all now implemented. The first two brought
+`GfxRenderer`'s `Color` enum with them.
+
+`Color` is the one place where this device is straightforwardly better than the
+two before it. On e-paper `LightGray` and `DarkGray` are Bayer dither
+densities faked out of pure black and white, and `osk.cpp`'s own comment worries
+that "a dense checkerboard immediately behind small text can read as visually
+busier than a real gray keycap would ... worth a second look on the physical
+panel specifically for that". Here they are real blends between the palette's
+ink and paper. There is nothing to look at.
+
+**Milestone 3 itself was almost free.** `osk.cpp` and `osk.h` came over with
+two substitutions, the include and the renderer's type name, and compiled
+first try. That is the whole return on having matched `GfxRenderer`'s
+signatures instead of inventing a cleaner interface: the keyboard's layout was
+already written in proportional half-units against a caller-given rectangle
+(`g_unitPx = width / kUnitsPerRow`, `g_rowH = height / kRowCount`), so it
+re-flowed from 960x540 to 480x320 with no geometry work at all.
+
+The layout answer this milestone existed to produce: six rows at 32 pixels is
+192 pixels of keyboard, leaving **7 terminal rows of 60 columns** while typing,
+against 19 with the keyboard folded away. A 2-half-unit key comes out about
+4.6mm across on this 74mm-wide panel, which is a fingernail or stylus target
+rather than a fingertip one. Whether that is acceptable is a question for the
+hand, not the arithmetic.
+
+Timings: the keyboard alone is 49ms to draw, the whole screen with it 103ms.
+49ms is enough to feel, so the keyboard is redrawn only when it actually looks
+different, which is a modifier arming or a one-shot Shift clearing itself on
+the next character. A plain keystroke changes one row of text and nothing else.
+
+The echo area in `main.cpp` is not the terminal and none of it should survive:
+`screen_editor.cpp` is milestone 4. It exists to show that a tapped key becomes
+a character.

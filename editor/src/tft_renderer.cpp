@@ -53,6 +53,41 @@ const EpdFontFamily* TftRenderer::family(const int fontId) const {
   return (it == fontMap_.end()) ? nullptr : &it->second;
 }
 
+// Mixes two RGB565 values, `alpha` being how much of `a` survives, 0 to 255.
+// Done per channel at native depth rather than by unpacking to 8-bit and back,
+// which would cost accuracy in green for nothing.
+static uint16_t blend565(const uint16_t a, const uint16_t b, const uint8_t alpha) {
+  const uint32_t inv = 255u - alpha;
+  const uint32_t r = (((a >> 11) & 0x1F) * alpha + ((b >> 11) & 0x1F) * inv) / 255u;
+  const uint32_t g = (((a >> 5) & 0x3F) * alpha + ((b >> 5) & 0x3F) * inv) / 255u;
+  const uint32_t bl = ((a & 0x1F) * alpha + (b & 0x1F) * inv) / 255u;
+  return static_cast<uint16_t>((r << 11) | (g << 5) | bl);
+}
+
+uint16_t TftRenderer::resolveColor(const Color color) const {
+  switch (color) {
+    case Black:     return palette_.ink;
+    case DarkGray:  return blend565(palette_.ink, palette_.paper, 128);  // ~50%, matching the dither density it replaces
+    case LightGray: return blend565(palette_.ink, palette_.paper, 64);   // ~25%, likewise
+    case White:     return palette_.paper;
+    case Clear:     return palette_.paper;  // nothing here composites, so Clear reads as paper
+  }
+  return palette_.ink;
+}
+
+void TftRenderer::fillRoundedRect(const int x, const int y, const int width, const int height,
+                                  const int cornerRadius, const Color color) const {
+  tft_.fillRoundRect(x, y, width, height, cornerRadius, resolveColor(color));
+}
+
+void TftRenderer::drawRoundedRect(const int x, const int y, const int width, const int height,
+                                  const int lineWidth, const int cornerRadius, const bool state) const {
+  const uint16_t colour = state ? palette_.ink : palette_.paper;
+  for (int i = 0; i < lineWidth; i++) {
+    tft_.drawRoundRect(x + i, y + i, width - 2 * i, height - 2 * i, cornerRadius - i, colour);
+  }
+}
+
 void TftRenderer::fillRect(const int x, const int y, const int width, const int height, const bool state) const {
   tft_.fillRect(x, y, width, height, state ? palette_.ink : palette_.paper);
 }

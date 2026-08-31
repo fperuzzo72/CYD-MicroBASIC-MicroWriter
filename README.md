@@ -22,7 +22,7 @@ real hardware rather than inferred, and the board reports 335KB of free heap at
 boot, which is the budget the rest of the port lives inside. Evidence for every
 row is in `docs/HARDWARE.md`.
 
-Milestone 2, the render layer, is **done**. `TftRenderer` offers the fifteen
+Milestone 2, the render layer, is **done**. `TftRenderer` offers the eighteen
 `GfxRenderer` methods the ported code actually calls, with matching signatures,
 and draws EpdFont glyphs straight to the panel with no framebuffer in between.
 A full character-grid repaint costs 65ms and a single cell 240us, both measured
@@ -40,7 +40,13 @@ exactly the width of MSX BASIC's text screen, so it is the boot mode, and the
 render demo boots into something shaped like an MSX startup screen with this
 board's own real numbers in it.
 
-No MicroBASIC feature has been ported yet. The PaperS3 sources sit verbatim in
+Milestone 3, touch and the on-screen keyboard, is **done**. `osk.cpp` came over
+from the PaperS3 with nothing changed but its include and the renderer's type
+name, and it emits standard USB HID keycodes, which is the same wire format the
+editor and interpreter already expect. With the keyboard up the terminal has 7
+rows of 60 columns; folded away, 19.
+
+The interpreter and the real terminal are not ported yet. The PaperS3 sources sit verbatim in
 `port-staging/` and move into `editor/src/` one at a time. See
 `docs/PORTING_PLAN.md` for the order and for what is not coming across at all.
 
